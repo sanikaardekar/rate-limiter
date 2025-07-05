@@ -5,7 +5,8 @@ export interface RateLimitRule {
   keyGenerator?: (req: any) => string; 
   skipIf?: (req: any) => boolean; 
   message?: string; 
-  statusCode?: number; 
+  statusCode?: number;
+  algorithm?: 'fixed' | 'sliding'; // Rate limiting algorithm
 }
 
 export interface RateLimitInfo {

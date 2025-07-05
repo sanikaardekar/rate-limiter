@@ -4,12 +4,13 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 
 ## 🚀 Features
 
+- **Sliding Window Counter Algorithm**: More accurate rate limiting with smooth distribution
 - **Multiple Rate Limiting Rules**: Global, API-specific, authentication, and burst protection
-- **Redis Persistence**: Distributed rate limiting with Redis backend
+- **Redis Persistence**: Distributed rate limiting with Redis backend using sorted sets
 - **Queue-Based Processing**: Asynchronous job processing with Bull queues
 - **Flexible Configuration**: Path-specific rules with custom key generators
 - **Monitoring & Admin**: Real-time stats and administrative controls
-- **Production Ready**: Error handling, logging, and graceful shutdown
+- **Production Ready**: Error handling, logging, graceful shutdown, and algorithm fallback
 - **RFC Compliant**: Standard and legacy HTTP headers
 
 ## 📋 Table of Contents
@@ -85,10 +86,12 @@ curl http://localhost:3000/admin/stats
 
 1. **Request arrives** → Express.js server
 2. **Rate limiter middleware** → Checks all applicable rules
-3. **Cache service** → Queries Redis for current counts
-4. **Decision made** → Allow/block request based on limits
-5. **Queue job** → Async increment/cleanup operations
-6. **Response sent** → With appropriate headers and status
+3. **Sliding window check** → Redis sorted sets track request timestamps
+4. **Expired requests removed** → Cleanup old entries outside window
+5. **Current count calculated** → Count requests in sliding window
+6. **Decision made** → Allow/block request based on limits
+7. **Queue job** → Async increment/cleanup operations
+8. **Response sent** → With appropriate headers and status
 
 ### Key Classes
 
@@ -253,9 +256,22 @@ Response:
 
 ## 🧪 Testing
 
+### Rate Limiting Algorithm
+
+The system uses **Sliding Window Counter** algorithm:
+- More accurate than fixed windows
+- Prevents burst at window boundaries
+- Uses Redis sorted sets for timestamp tracking
+- Falls back to fixed window if needed
+
 ### Manual Testing
 
 ```bash
+# Reset rate limits before testing
+curl -X POST http://localhost:3000/admin/reset-rate-limit \
+  -H "Content-Type: application/json" \
+  -d '{"identifier":"127.0.0.1"}'
+
 # Test burst protection (should block after 10 requests)
 for i in {1..15}; do curl http://localhost:3000/api/data; echo; done
 
@@ -292,9 +308,10 @@ redis-cli get "rate_limit:127.0.0.1:api"
 
 1. **Single Redis Instance**: Assumes single Redis server (not clustered)
 2. **IP-Based Identification**: Uses client IP for rate limiting by default
-3. **Fixed Window Algorithm**: Uses fixed time windows, not sliding windows
+3. **Sliding Window Algorithm**: Uses sliding window counter with fixed window fallback
 4. **Synchronous Processing**: Rate limit checks are synchronous, increments are async
 5. **Memory Constraints**: Local cache has no size limits (relies on TTL cleanup)
+6. **Redis Sorted Sets**: Relies on ZSET operations for sliding window implementation
 
 ### Limitations
 
@@ -309,7 +326,8 @@ redis-cli get "rate_limit:127.0.0.1:api"
 1. **Race Conditions**: Possible under extreme concurrent load
 2. **Memory Leaks**: Local cache cleanup relies on intervals
 3. **Redis Failover**: No automatic Redis failover handling
-4. **Lua Script Errors**: Falls back to non-atomic operations
+4. **Lua Script Errors**: Falls back to fixed window algorithm
+5. **Sorted Set Growth**: Redis memory usage grows with request volume (cleaned by TTL)
 
 ### Monitoring & Alerting
 

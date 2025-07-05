@@ -44,6 +44,68 @@ export class RedisService {
   }
 
   async incrementCounter(key: string, rule: RateLimitRule): Promise<CacheEntry> {
+    const algorithm = rule.algorithm || 'sliding'; 
+    
+    if (algorithm === 'fixed') {
+      return await this.incrementCounterFixedWindow(key, rule);
+    } else {
+      return await this.incrementCounterSlidingWindow(key, rule);
+    }
+  }
+
+  private async incrementCounterSlidingWindow(key: string, rule: RateLimitRule): Promise<CacheEntry> {
+    const now = Date.now();
+    const windowStart = now - rule.windowMs;
+    const resetTime = now + rule.windowMs;
+
+    try {
+      const luaScript = `
+        local key = KEYS[1]
+        local now = tonumber(ARGV[1])
+        local windowStart = tonumber(ARGV[2])
+        local maxRequests = tonumber(ARGV[3])
+        local resetTime = tonumber(ARGV[4])
+        local requestId = ARGV[5]
+
+        -- Remove expired entries
+        redis.call('ZREMRANGEBYSCORE', key, 0, windowStart)
+
+        -- Count current requests in window
+        local currentCount = redis.call('ZCARD', key)
+
+        -- Add current request
+        redis.call('ZADD', key, now, requestId)
+        redis.call('EXPIRE', key, math.ceil(resetTime / 1000))
+
+        local newCount = currentCount + 1
+
+        return cjson.encode({
+          count = newCount,
+          resetTime = resetTime,
+          createdAt = now
+        })
+      `;
+
+      const requestId = `${now}-${Math.random()}`;
+      const result = await this.redis.eval(
+        luaScript,
+        1,
+        key,
+        now.toString(),
+        windowStart.toString(),
+        rule.maxRequests.toString(),
+        resetTime.toString(),
+        requestId
+      ) as string;
+
+      return JSON.parse(result);
+    } catch (error) {
+      console.error('Error with sliding window, falling back to fixed window:', error);
+      return this.incrementCounterFixedWindow(key, rule);
+    }
+  }
+
+  private async incrementCounterFixedWindow(key: string, rule: RateLimitRule): Promise<CacheEntry> {
     const now = Date.now();
     const windowStart = Math.floor(now / rule.windowMs) * rule.windowMs;
     const resetTime = windowStart + rule.windowMs;

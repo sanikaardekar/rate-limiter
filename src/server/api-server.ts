@@ -47,14 +47,15 @@ export class ApiServer {
         windowMs: 15 * 60 * 1000, 
         maxRequests: 1000, 
         message: 'Too many requests from this IP, please try again later',
+        algorithm: 'sliding',
       },
       {
         id: 'api',
         windowMs: 60 * 1000, 
         maxRequests: 100, 
-        
         keyGenerator: (req) => `${req.ip}--${req.path}`,
         skipIf: (req) => req.path.startsWith('/health'),
+        algorithm: 'sliding', 
       },
       {
         id: 'auth',
@@ -63,6 +64,7 @@ export class ApiServer {
         message: 'Too many authentication attempts, please try again later',
         statusCode: 423,
         skipIf: (req) => !req.path.startsWith('/auth'),
+        algorithm: 'fixed', // Use fixed window for auth (simpler, stricter)
       },
       {
         id: 'burst',
@@ -70,6 +72,7 @@ export class ApiServer {
         maxRequests: 10, 
         message: 'Request rate too high, please slow down',
         skipIf: (req) => req.path.startsWith('/health'),
+        algorithm: 'sliding',
       },
     ];
 
