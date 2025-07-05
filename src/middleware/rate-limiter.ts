@@ -1,4 +1,3 @@
-// src/middleware/rate-limiter.ts
 import { Request, Response, NextFunction } from 'express';
 import { CacheService } from '../services/cache-service';
 import { QueueService } from '../services/queue-service';

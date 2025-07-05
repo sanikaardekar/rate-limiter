@@ -1,4 +1,3 @@
-// src/services/queue-service.ts
 import Bull from 'bull';
 import { RedisService } from './redis-service';
 import { QueueMessage } from '../types';

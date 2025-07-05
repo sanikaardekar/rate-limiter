@@ -1,4 +1,3 @@
-// src/client/test-client.ts
 import axios, { AxiosResponse, AxiosError } from 'axios';
 
 interface RateLimitHeaders {

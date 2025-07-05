@@ -1,4 +1,3 @@
-// src/workers/rate-limit-worker.ts
 import cluster from 'cluster';
 import os from 'os';
 import { QueueService } from '../services/queue-service';

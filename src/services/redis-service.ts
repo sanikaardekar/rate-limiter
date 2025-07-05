@@ -1,4 +1,3 @@
-// src/services/redis-service.ts
 import Redis from 'ioredis';
 import { RateLimitRule, CacheEntry } from '../types';
 

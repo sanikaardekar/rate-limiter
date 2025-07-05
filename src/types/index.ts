@@ -1,4 +1,3 @@
-// src/types/index.ts
 export interface RateLimitRule {
   id: string;
   windowMs: number; // Time window in milliseconds

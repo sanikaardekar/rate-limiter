@@ -1,4 +1,3 @@
-// src/utils/headers.ts
 import { Response } from 'express';
 import { RateLimitResult, RateLimitHeaders, RateLimitRule } from '../types';
 

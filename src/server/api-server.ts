@@ -1,4 +1,3 @@
-// src/server/api-server.ts
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -55,7 +54,8 @@ export class ApiServer {
         id: 'api',
         windowMs: 60 * 1000, // 1 minute
         maxRequests: 100, // API endpoint limit
-        keyGenerator: (req) => `${req.ip}:${req.path}`,
+        
+        keyGenerator: (req) => `${req.ip}--${req.path}`,
         skipIf: (req) => req.path.startsWith('/health'),
       },
       {
@@ -138,7 +138,7 @@ export class ApiServer {
     });
 
     // 404 handler
-    this.app.use('*', (req: Request, res: Response) => {
+    this.app.use((req: Request, res: Response) => {
       res.status(404).json({
         error: 'Not Found',
         message: `Route ${req.method} ${req.originalUrl} not found`,
