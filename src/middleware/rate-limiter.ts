@@ -10,8 +10,8 @@ export interface RateLimiterOptions {
   skipFailedRequests?: boolean;
   keyGenerator?: (req: Request) => string;
   onLimitReached?: (req: Request, res: Response, result: any) => void;
-  standardHeaders?: boolean; // RFC 6585 compliant headers
-  legacyHeaders?: boolean; // X-RateLimit-* headers
+  standardHeaders?: boolean; 
+  legacyHeaders?: boolean; 
 }
 
 export class RateLimiterMiddleware {
@@ -37,20 +37,20 @@ export class RateLimiterMiddleware {
   middleware = () => {
     return async (req: Request, res: Response, next: NextFunction) => {
       try {
-        // Apply all rules and check if any are violated
         const results = await Promise.all(
           this.options.rules.map(rule => this.checkRule(req, rule))
         );
 
-        // Find the most restrictive result (first blocked rule)
+        // Find the most restrictive result (lowest remaining requests or first blocked)
         const blockedResult = results.find(result => !result.allowed);
-        const finalResult = blockedResult || results[0];
+        const finalResult = blockedResult || results.reduce((most, current) => 
+          current.info.remainingRequests < most.info.remainingRequests ? current : most
+        );
 
         if (!finalResult) {
           return next();
         }
 
-        // Set headers for the most restrictive rule
         if (this.options.legacyHeaders) {
           HeadersUtil.setRateLimitHeaders(res, finalResult);
         }
@@ -61,33 +61,27 @@ export class RateLimiterMiddleware {
 
         HeadersUtil.addSecurityHeaders(res);
 
-        // Log the event
         const identifier = this.options.keyGenerator(req);
         const metadata = HeadersUtil.getRequestMetadata(req);
         HeadersUtil.logRateLimitEvent(identifier, finalResult.rule, finalResult, metadata);
 
         if (!finalResult.allowed) {
-          // Queue cleanup job for expired entries
           await this.queueCleanupJob(identifier, finalResult.rule);
-          
-          // Call custom handler
+
           return this.options.onLimitReached(req, res, finalResult);
         }
 
-        // Queue increment job for async processing
         await this.queueIncrementJob(identifier, finalResult.rule);
 
         next();
       } catch (error) {
         console.error('Rate limiter middleware error:', error);
-        // Fail open - allow the request to proceed
         next();
       }
     };
   };
 
   private async checkRule(req: Request, rule: RateLimitRule) {
-    // Check skip conditions
     if (rule.skipIf && rule.skipIf(req)) {
       return this.createAllowedResult(rule);
     }
@@ -111,7 +105,6 @@ export class RateLimiterMiddleware {
   }
 
   private setStandardHeaders(res: Response, result: any): void {
-    // RFC 6585 compliant headers
     res.setHeader('RateLimit-Limit', result.rule.maxRequests);
     res.setHeader('RateLimit-Remaining', result.info.remainingRequests);
     res.setHeader('RateLimit-Reset', Math.ceil(result.info.resetTime / 1000));
@@ -154,16 +147,13 @@ export class RateLimiterMiddleware {
       timestamp: Date.now(),
     };
 
-    // Delay cleanup job by 1 minute
     await this.queueService.addRateLimitJob(message, 60000);
   }
 
-  // Method to create multiple middleware instances with different rules
   static create(options: RateLimiterOptions) {
     return new RateLimiterMiddleware(options).middleware();
   }
 
-  // Method to get stats for monitoring
   async getStats() {
     const queueStats = await this.queueService.getQueueStats();
     const cacheSize = this.cacheService.getLocalCacheSize();
@@ -174,7 +164,6 @@ export class RateLimiterMiddleware {
     };
   }
 
-  // Method to reset rate limits for a specific identifier
   async resetRateLimit(identifier: string, ruleId?: string): Promise<void> {
     if (ruleId) {
       const rule = this.options.rules.find(r => r.id === ruleId);
@@ -183,7 +172,6 @@ export class RateLimiterMiddleware {
         await this.cacheService.resetRateLimit(key);
       }
     } else {
-      // Reset all rules for this identifier
       for (const rule of this.options.rules) {
         const key = HeadersUtil.generateRateLimitKey(identifier, rule);
         await this.cacheService.resetRateLimit(key);

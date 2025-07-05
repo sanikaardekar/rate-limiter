@@ -4,7 +4,7 @@ import { RateLimitRule, CacheEntry, RateLimitResult, RateLimitInfo } from '../ty
 export class CacheService {
   private redisService: RedisService;
   private localCache: Map<string, CacheEntry> = new Map();
-  private localCacheTTL: number = 60000; // 1 minute local cache
+  private localCacheTTL: number = 60000; 
 
   constructor() {
     this.redisService = RedisService.getInstance();
@@ -13,23 +13,20 @@ export class CacheService {
 
   async checkRateLimit(key: string, rule: RateLimitRule): Promise<RateLimitResult> {
     try {
-      // Try local cache first for better performance
       const localData = this.getFromLocalCache(key);
       if (localData && Date.now() < localData.resetTime) {
-        return this.buildResult(localData, rule, false);
+        const allowed = localData.count <= rule.maxRequests;
+        return this.buildResult(localData, rule, allowed);
       }
 
-      // Increment counter in Redis
       const data = await this.redisService.incrementCounter(key, rule);
       
-      // Update local cache
       this.setInLocalCache(key, data);
 
       const allowed = data.count <= rule.maxRequests;
       return this.buildResult(data, rule, allowed);
     } catch (error) {
       console.error('Error checking rate limit:', error);
-      // Fail open - allow request if there's an error
       return this.buildDefaultResult(rule, true);
     }
   }
@@ -66,7 +63,6 @@ export class CacheService {
     const entry = this.localCache.get(key);
     if (!entry) return null;
 
-    // Check if entry is expired
     if (Date.now() > entry.resetTime) {
       this.localCache.delete(key);
       return null;
@@ -76,7 +72,6 @@ export class CacheService {
   }
 
   private setInLocalCache(key: string, data: CacheEntry): void {
-    // Only cache if it's not close to expiring
     const timeToExpire = data.resetTime - Date.now();
     if (timeToExpire > this.localCacheTTL / 2) {
       this.localCache.set(key, data);

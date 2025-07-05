@@ -30,7 +30,7 @@ export class RateLimitTestClient {
   }
 
   async runTests(): Promise<void> {
-    console.log('🚀 Starting Rate Limit Tests...\n');
+    console.log('Starting Rate Limit Tests...\n');
 
     await this.testHealthEndpoint();
     await this.testNormalApiUsage();
@@ -44,18 +44,18 @@ export class RateLimitTestClient {
   }
 
   private async testHealthEndpoint(): Promise<void> {
-    console.log('📊 Testing health endpoint (should bypass rate limiting)...');
+    console.log('Testing health endpoint (should bypass rate limiting)...');
     
     for (let i = 0; i < 5; i++) {
       await this.makeRequest('GET', '/health');
       await this.sleep(100);
     }
     
-    console.log('✅ Health endpoint tests completed\n');
+    console.log('Health endpoint tests completed\n');
   }
 
   private async testNormalApiUsage(): Promise<void> {
-    console.log('🔄 Testing normal API usage...');
+    console.log('Testing normal API usage...');
     
     const endpoints = ['/api/data', '/test/limited'];
     
@@ -66,52 +66,49 @@ export class RateLimitTestClient {
       }
     }
     
-    console.log('✅ Normal API usage tests completed\n');
+    console.log('Normal API usage tests completed\n');
   }
 
   private async testRateLimitExceeded(): Promise<void> {
-    console.log('⚠️  Testing rate limit exceeded...');
+    console.log('Testing rate limit exceeded...');
     
-    // Make rapid requests to trigger rate limiting
     const promises = [];
     for (let i = 0; i < 15; i++) {
       promises.push(this.makeRequest('GET', '/test/limited'));
     }
     
     await Promise.all(promises);
-    console.log('✅ Rate limit exceeded tests completed\n');
+    console.log('Rate limit exceeded tests completed\n');
   }
 
   private async testBurstProtection(): Promise<void> {
-    console.log('💥 Testing burst protection (1 second window)...');
+    console.log('Testing burst protection (1 second window)...');
     
-    // Make 15 requests simultaneously to trigger burst protection
     const promises = [];
     for (let i = 0; i < 15; i++) {
       promises.push(this.makeRequest('GET', '/api/data'));
     }
     
     await Promise.all(promises);
-    console.log('✅ Burst protection tests completed\n');
+    console.log('Burst protection tests completed\n');
   }
 
   private async testAuthEndpoints(): Promise<void> {
-    console.log('🔐 Testing authentication endpoints (strict limits)...');
+    console.log('Testing authentication endpoints (strict limits)...');
     
-    // Test login endpoint with strict limits
     for (let i = 0; i < 8; i++) {
       await this.makeRequest('POST', '/auth/login', {
-        email: 'test@example.com',
+        email: 'test@example.com',//.env
         password: 'password123',
       });
       await this.sleep(100);
     }
     
-    console.log('✅ Authentication endpoint tests completed\n');
+    console.log('Authentication endpoint tests completed\n');
   }
 
   private async testConcurrentRequests(): Promise<void> {
-    console.log('🔀 Testing concurrent requests...');
+    console.log('Testing concurrent requests...');
     
     const concurrentRequests = 20;
     const promises = [];
@@ -121,21 +118,19 @@ export class RateLimitTestClient {
     }
     
     await Promise.all(promises);
-    console.log('✅ Concurrent request tests completed\n');
+    console.log('Concurrent request tests completed\n');
   }
 
   private async testRecoveryAfterLimit(): Promise<void> {
-    console.log('🔄 Testing recovery after rate limit...');
+    console.log('Testing recovery after rate limit...');
     
-    // First, trigger rate limit
     for (let i = 0; i < 12; i++) {
       await this.makeRequest('GET', '/test/limited');
     }
     
     console.log('Waiting for rate limit window to reset...');
-    await this.sleep(5000); // Wait 5 seconds
+    await this.sleep(5000); 
     
-    // Try again after waiting
     await this.makeRequest('GET', '/test/limited');
     console.log('✅ Recovery tests completed\n');
   }
@@ -219,7 +214,7 @@ export class RateLimitTestClient {
   }
 
   private printSummary(): void {
-    console.log('\n📊 Test Summary:');
+    console.log('\nTest Summary:');
     console.log('================');
     
     const totalRequests = this.results.length;
@@ -236,9 +231,8 @@ export class RateLimitTestClient {
       .reduce((sum, r) => sum + r.responseTime, 0) / totalRequests;
     console.log(`Average Response Time: ${avgResponseTime.toFixed(2)}ms`);
     
-    console.log('\n🏆 Rate Limiter is working correctly!');
+    console.log('\nRate Limiter is working correctly!');
     
-    // Save results to file
     this.saveResultsToFile();
   }
 
@@ -266,7 +260,6 @@ export class RateLimitTestClient {
   }
 }
 
-// CLI entry point
 if (require.main === module) {
   const client = new RateLimitTestClient();
   
@@ -275,15 +268,15 @@ if (require.main === module) {
       const args = process.argv.slice(2);
       const baseUrl = args[0] || 'http://localhost:3000';
       
-      console.log(`🎯 Testing rate limiter at: ${baseUrl}\n`);
+      console.log(`Testing rate limiter at: ${baseUrl}\n`);
       
       const testClient = new RateLimitTestClient(baseUrl);
       await testClient.runTests();
       
-      console.log('\n🎉 All tests completed successfully!');
+      console.log('\n All tests completed successfully!');
       process.exit(0);
     } catch (error) {
-      console.error('❌ Test execution failed:', error);
+      console.error('Test execution failed:', error);
       process.exit(1);
     }
   }

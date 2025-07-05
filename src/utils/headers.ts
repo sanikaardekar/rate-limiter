@@ -29,7 +29,6 @@ export class HeadersUtil {
   }
 
   static getClientIdentifier(req: any): string {
-    // Try to get client IP from various headers
     const forwarded = req.headers['x-forwarded-for'];
     const realIp = req.headers['x-real-ip'];
     const clientIp = req.headers['x-client-ip'];
@@ -80,7 +79,6 @@ export class HeadersUtil {
   }
 
   static sanitizeHeaderValue(value: string): string {
-    // Remove any potentially dangerous characters
     return value.replace(/[\r\n\t]/g, '').substring(0, 100);
   }
 

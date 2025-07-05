@@ -24,7 +24,6 @@ export class QueueService {
   }
 
   private setupQueueProcessors(): void {
-    // Process rate limit messages
     this.rateLimitQueue.process('process-rate-limit', 10, async (job) => {
       const { type, key, rule, timestamp } = job.data;
       
@@ -75,12 +74,11 @@ export class QueueService {
   }
 
   private setupPeriodicCleanup(): void {
-    // Schedule cleanup every 10 minutes
     this.cleanupQueue.add(
       'cleanup-expired',
       { pattern: 'rate_limit:*' },
       {
-        repeat: { cron: '*/10 * * * *' }, // Every 10 minutes
+        repeat: { cron: '*/10 * * * *' }, 
         removeOnComplete: 5,
         removeOnFail: 3,
       }

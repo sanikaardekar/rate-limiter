@@ -9,7 +9,7 @@ import { RateLimitRule } from '../types';
 export class ApiServer {
   private app: express.Application;
   private port: number;
-  private rateLimiter!: RateLimiterMiddleware; // Definite assignment assertion
+  private rateLimiter!: RateLimiterMiddleware; 
   private cacheService: CacheService;
   private queueService: QueueService;
 
@@ -34,7 +34,6 @@ export class ApiServer {
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true }));
     
-    // Request logging
     this.app.use((req: Request, res: Response, next: NextFunction) => {
       console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - ${req.ip}`);
       next();
@@ -42,33 +41,32 @@ export class ApiServer {
   }
 
   private setupRateLimiting(): void {
-    // Define different rate limiting rules
     const rules: RateLimitRule[] = [
       {
         id: 'global',
-        windowMs: 15 * 60 * 1000, // 15 minutes
-        maxRequests: 1000, // Global limit
+        windowMs: 15 * 60 * 1000, 
+        maxRequests: 1000, 
         message: 'Too many requests from this IP, please try again later',
       },
       {
         id: 'api',
-        windowMs: 60 * 1000, // 1 minute
-        maxRequests: 100, // API endpoint limit
+        windowMs: 60 * 1000, 
+        maxRequests: 100, 
         
         keyGenerator: (req) => `${req.ip}--${req.path}`,
         skipIf: (req) => req.path.startsWith('/health'),
       },
       {
         id: 'auth',
-        windowMs: 5 * 60 * 1000, // 5 minutes
-        maxRequests: 5, // Strict limit for auth endpoints
+        windowMs: 5 * 60 * 1000, 
+        maxRequests: 5,
         message: 'Too many authentication attempts, please try again later',
-        statusCode: 423, // Locked
+        statusCode: 423, 
       },
       {
         id: 'burst',
-        windowMs: 1000, // 1 second
-        maxRequests: 10, // Burst protection
+        windowMs: 1000, 
+        maxRequests: 10, 
         message: 'Request rate too high, please slow down',
       },
     ];
@@ -91,12 +89,10 @@ export class ApiServer {
       },
     });
 
-    // Apply global rate limiting
     this.app.use(this.rateLimiter.middleware());
   }
 
   private setupRoutes(): void {
-    // Health check endpoint (bypasses rate limiting)
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({
         status: 'healthy',
@@ -106,23 +102,20 @@ export class ApiServer {
       });
     });
 
-    // API routes with different rate limits
+  
     this.app.get('/api/data', this.createApiRoute());
     this.app.post('/api/data', this.createApiRoute());
     this.app.put('/api/data/:id', this.createApiRoute());
     this.app.delete('/api/data/:id', this.createApiRoute());
 
-    // Auth routes with stricter limits
     this.app.post('/auth/login', this.createAuthRoute());
     this.app.post('/auth/register', this.createAuthRoute());
     this.app.post('/auth/forgot-password', this.createAuthRoute());
 
-    // Admin routes for monitoring
     this.app.get('/admin/stats', this.getStatsRoute());
     this.app.post('/admin/reset-rate-limit', this.resetRateLimitRoute());
     this.app.get('/admin/queue-stats', this.getQueueStatsRoute());
 
-    // Test routes for demonstration
     this.app.get('/test/unlimited', (req: Request, res: Response) => {
       res.json({
         message: 'This endpoint has no rate limiting',
@@ -137,7 +130,7 @@ export class ApiServer {
       });
     });
 
-    // 404 handler
+
     this.app.use((req: Request, res: Response) => {
       res.status(404).json({
         error: 'Not Found',
@@ -150,7 +143,6 @@ export class ApiServer {
   private createApiRoute() {
     return async (req: Request, res: Response): Promise<void> => {
       try {
-        // Simulate some processing time
         await new Promise(resolve => setTimeout(resolve, Math.random() * 100));
         
         res.json({
@@ -172,7 +164,6 @@ export class ApiServer {
   private createAuthRoute() {
     return async (req: Request, res: Response): Promise<void> => {
       try {
-        // Simulate auth processing
         await new Promise(resolve => setTimeout(resolve, 200));
         
         res.json({
@@ -277,12 +268,12 @@ export class ApiServer {
   async start(): Promise<void> {
     return new Promise((resolve) => {
       this.app.listen(this.port, () => {
-        console.log(`🚀 API Server running on port ${this.port}`);
-        console.log(`📊 Health check: http://localhost:${this.port}/health`);
-        console.log(`🔌 API endpoints: http://localhost:${this.port}/api/*`);
-        console.log(`⚙️  Admin stats: http://localhost:${this.port}/admin/stats`);
-        console.log(`🔐 Auth endpoints: http://localhost:${this.port}/auth/*`);
-        console.log(`🧪 Test endpoints: http://localhost:${this.port}/test/*`);
+        console.log(`API Server running on port ${this.port}`);
+        console.log(`Health check: http://localhost:${this.port}/health`);
+        console.log(`API endpoints: http://localhost:${this.port}/api/*`);
+        console.log(`Admin stats: http://localhost:${this.port}/admin/stats`);
+        console.log(`Auth endpoints: http://localhost:${this.port}/auth/*`);
+        console.log(`Test endpoints: http://localhost:${this.port}/test/*`);
         resolve();
       });
     });
@@ -290,9 +281,7 @@ export class ApiServer {
 
   async stop(): Promise<void> {
     return new Promise((resolve) => {
-      // Close any open connections
-      console.log('🛑 Shutting down API server...');
-      // Add cleanup logic here if needed
+      console.log('Shutting down API server...');
       resolve();
     });
   }
@@ -306,25 +295,23 @@ export class ApiServer {
   }
 }
 
-// CLI entry point
 if (require.main === module) {
   const port = parseInt(process.env.PORT || '3000');
   const server = new ApiServer(port);
   
   server.start().catch(error => {
-    console.error('❌ Failed to start server:', error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   });
   
-  // Graceful shutdown
   process.on('SIGTERM', async () => {
-    console.log('📨 Received SIGTERM, shutting down gracefully');
+    console.log('Received SIGTERM, shutting down gracefully');
     await server.stop();
     process.exit(0);
   });
   
   process.on('SIGINT', async () => {
-    console.log('📨 Received SIGINT, shutting down gracefully');
+    console.log('Received SIGINT, shutting down gracefully');
     await server.stop();
     process.exit(0);
   });

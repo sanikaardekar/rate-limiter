@@ -1,11 +1,11 @@
 export interface RateLimitRule {
   id: string;
-  windowMs: number; // Time window in milliseconds
-  maxRequests: number; // Max requests per window
-  keyGenerator?: (req: any) => string; // Custom key generator
-  skipIf?: (req: any) => boolean; // Skip condition
-  message?: string; // Custom error message
-  statusCode?: number; // Custom status code
+  windowMs: number;
+  maxRequests: number; 
+  keyGenerator?: (req: any) => string; 
+  skipIf?: (req: any) => boolean; 
+  message?: string; 
+  statusCode?: number; 
 }
 
 export interface RateLimitInfo {

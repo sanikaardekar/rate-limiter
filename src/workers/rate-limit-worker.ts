@@ -18,13 +18,10 @@ export class RateLimitWorker {
     console.log(`Rate limit worker ${process.pid} starting...`);
     
     try {
-      // Monitor queue health
       this.startHealthCheck();
       
-      // Start processing
       console.log(`Rate limit worker ${process.pid} ready to process jobs`);
-      
-      // Keep the process alive
+
       process.on('SIGTERM', () => this.shutdown());
       process.on('SIGINT', () => this.shutdown());
       
@@ -46,7 +43,6 @@ export class RateLimitWorker {
           cleanupQueue: stats.cleanupQueue,
         });
         
-        // Alert if queues are backing up
         if (stats.rateLimitQueue.waiting > 1000) {
           console.warn(`High queue backlog: ${stats.rateLimitQueue.waiting} waiting jobs`);
         }
@@ -58,7 +54,7 @@ export class RateLimitWorker {
       } catch (error) {
         console.error('Health check failed:', error);
       }
-    }, 30000); // Every 30 seconds
+    }, 30000); 
   }
 
   private setupGracefulShutdown(): void {
@@ -67,16 +63,12 @@ export class RateLimitWorker {
       this.isShuttingDown = true;
       
       try {
-        // Pause queues to stop accepting new jobs
         await this.queueService.pauseQueues();
         
-        // Wait for current jobs to complete (max 30 seconds)
         await this.waitForJobsToComplete(30000);
         
-        // Close queue connections
         await this.queueService.closeQueues();
         
-        // Close Redis connection
         await this.redisService.disconnect();
         
         console.log(`Worker ${process.pid} shut down complete`);
@@ -133,7 +125,6 @@ export class RateLimitWorker {
   }
 }
 
-// Cluster management for scaling workers
 export class WorkerCluster {
   private numWorkers: number;
   
@@ -145,12 +136,10 @@ export class WorkerCluster {
     if (cluster.isMaster) {
       console.log(`Master ${process.pid} starting ${this.numWorkers} workers...`);
       
-      // Fork workers
       for (let i = 0; i < this.numWorkers; i++) {
         cluster.fork();
       }
-      
-      // Handle worker deaths
+
       cluster.on('exit', (worker, code, signal) => {
         console.log(`Worker ${worker.process.pid} died with code ${code} and signal ${signal}`);
         
@@ -160,7 +149,6 @@ export class WorkerCluster {
         }
       });
       
-      // Graceful shutdown
       process.on('SIGTERM', () => {
         console.log('Master received SIGTERM, shutting down workers...');
         for (const id in cluster.workers) {
@@ -176,7 +164,6 @@ export class WorkerCluster {
       });
       
     } else {
-      // Worker process
       const worker = new RateLimitWorker();
       worker.start().catch(error => {
         console.error('Worker failed to start:', error);
@@ -186,7 +173,6 @@ export class WorkerCluster {
   }
 }
 
-// CLI entry point
 if (require.main === module) {
   const numWorkers = parseInt(process.env.RATE_LIMIT_WORKERS || '0') || os.cpus().length;
   
@@ -194,7 +180,6 @@ if (require.main === module) {
     const cluster = new WorkerCluster(numWorkers);
     cluster.start();
   } else {
-    // Single worker for development
     const worker = new RateLimitWorker();
     worker.start().catch(error => {
       console.error('Failed to start worker:', error);

@@ -49,7 +49,6 @@ export class RedisService {
     const resetTime = windowStart + rule.windowMs;
 
     try {
-      // Use Lua script for atomic operations
       const luaScript = `
         local key = KEYS[1]
         local windowStart = tonumber(ARGV[1])
@@ -86,7 +85,6 @@ export class RedisService {
       return JSON.parse(result);
     } catch (error) {
       console.error('Error incrementing counter:', error);
-      // Fallback to non-atomic operation
       return this.incrementCounterFallback(key, rule);
     }
   }
