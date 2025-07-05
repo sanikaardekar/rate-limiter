@@ -98,8 +98,8 @@ export class RateLimitTestClient {
     
     for (let i = 0; i < 8; i++) {
       await this.makeRequest('POST', '/auth/login', {
-        email: 'test@example.com',//.env
-        password: 'password123',
+        email: process.env.TEST_EMAIL,
+        password: process.env.TEST_PASSWORD,
       });
       await this.sleep(100);
     }
