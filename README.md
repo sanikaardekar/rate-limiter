@@ -382,26 +382,6 @@ for i in {1..6}; do curl -X POST http://localhost:3000/auth/login; echo; done
 for i in {1..20}; do curl http://localhost:3000/health; echo; done
 ```
 
-### Load Testing
-
-```bash
-# Install Apache Bench
-brew install httpie
-
-# Test with concurrent requests
-ab -n 1000 -c 10 http://localhost:3000/api/data
-```
-
-### Redis Verification
-
-```bash
-# Check stored rate limit keys
-redis-cli keys "rate_limit:*"
-
-# View specific key data
-redis-cli get "rate_limit:127.0.0.1:api"
-```
-
 ## ⚠️ Assumptions & Limitations
 
 ### Assumptions
