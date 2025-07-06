@@ -28,7 +28,14 @@ export class RedisService {
   async getRateLimitData(key: string): Promise<CacheEntry | null> {
     try {
       const data = await this.redis.get(key);
-      return data ? JSON.parse(data) : null;
+      if (!data) return null;
+      
+      try {
+        return JSON.parse(data);
+      } catch (parseError) {
+        console.error('JSON parse error for key:', key, 'data:', data);
+        return null;
+      }
     } catch (error) {
       console.error('Error getting rate limit data:', error);
       return null;
