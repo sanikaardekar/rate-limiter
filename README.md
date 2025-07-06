@@ -29,6 +29,23 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - Node.js 16+
 - Redis server
 - TypeScript
+- npm or yarn package manager
+
+### Dependencies
+
+**Runtime Dependencies:**
+- `express` - Web framework
+- `ioredis` - Redis client
+- `bull` - Queue processing
+- `cors` - Cross-origin resource sharing
+- `helmet` - Security headers
+- `axios` - HTTP client (for testing)
+- `dotenv` - Environment variables
+
+**Development Dependencies:**
+- `typescript` - TypeScript compiler
+- `ts-node-dev` - Development server with hot reload
+- `@types/*` - TypeScript type definitions
 
 ### Installation
 
@@ -40,13 +57,25 @@ cd rate-limiter
 # Install dependencies
 npm install
 
-# Start Redis (macOS with Homebrew)
+# Install and start Redis (macOS with Homebrew)
 brew install redis
 redis-server
 
+# Build the project
+npm run build
+
 # Start the development server
 npm run dev
+
+# Or start production server
+npm start
 ```
+
+### Available Scripts
+
+- `npm run dev` - Start development server with hot reload
+- `npm run build` - Compile TypeScript to JavaScript
+- `npm start` - Start production server from compiled code
 
 The server will start on `http://localhost:3000`
 
@@ -246,7 +275,7 @@ The system implements four distinct rate limiting rules:
 ### 2. API Rate Limit
 - **Limit**: 100 requests per minute
 - **Scope**: `/api/*` endpoints
-- **Key**: `IP--path` (separate counters per endpoint)
+- **Key**: `${req.ip}--${req.path}` (separate counters per endpoint)
 - **Bypass**: `/health` endpoint excluded
 
 ### 3. Authentication Rate Limit
@@ -279,7 +308,7 @@ Rules are evaluated simultaneously, and the **most restrictive** (first blocked 
 | `POST` | `/auth/login` | Authentication | ✅ (Strict) |
 | `POST` | `/auth/register` | Registration | ✅ (Strict) |
 | `POST` | `/auth/forgot-password` | Password reset | ✅ (Strict) |
-| `GET` | `/test/unlimited` | No rate limiting | ❌ |
+| `GET` | `/test/unlimited` | Test endpoint (global limits apply) | ✅ |
 | `GET` | `/test/limited` | Rate limited test | ✅ |
 
 ### Admin Endpoints
@@ -306,18 +335,14 @@ Parameters:
 
 ### Rate Limit Headers
 
-Every response includes rate limiting headers:
+Every response includes both legacy and standard rate limiting headers:
 
-**Legacy Headers (X-RateLimit-*)**
+**Combined Headers (Legacy + Standard)**
 ```
 X-RateLimit-Limit: 100
 X-RateLimit-Remaining: 95
 X-RateLimit-Reset: 1640995200
 X-RateLimit-RetryAfter: 60
-```
-
-**Standard Headers (RFC 6585)**
-```
 RateLimit-Limit: 100
 RateLimit-Remaining: 95
 RateLimit-Reset: 1640995200
@@ -382,6 +407,29 @@ for i in {1..6}; do curl -X POST http://localhost:3000/auth/login; echo; done
 for i in {1..20}; do curl http://localhost:3000/health; echo; done
 ```
 
+### Comprehensive Test Client
+
+Use the built-in test client for thorough testing:
+
+```bash
+# Build the project first (required)
+npm run build
+
+# Run comprehensive test suite against default server (localhost:3000)
+node dist/client/test-client.js
+
+# Test against different server
+node dist/client/test-client.js http://localhost:3001
+```
+
+**Test Client Features:**
+- Tests all endpoints and HTTP methods
+- Validates rate limit headers (legacy + standard)
+- Tests burst protection, auth limits, and recovery
+- Generates detailed JSON reports
+- Measures response times and coverage
+- Concurrent request testing
+
 ## ⚠️ Assumptions & Limitations
 
 ### Assumptions
@@ -430,26 +478,3 @@ for i in {1..20}; do curl http://localhost:3000/health; echo; done
 3. **DDoS Protection**: Consider upstream rate limiting (CDN/Load Balancer)
 4. **Input Validation**: Validate all admin endpoint inputs
 
-## 👷 Rate Limit Worker
-
-The **Rate Limit Worker** processes background jobs to keep the API responsive:
-
-### What it does:
-- **Processes increment jobs**: Updates Redis counters asynchronously
-- **Handles cleanup jobs**: Removes expired rate limit entries
-- **Health monitoring**: Tracks queue stats and alerts on issues
-- **Graceful shutdown**: Completes active jobs before stopping
-
-### Running Workers:
-
-```bash
-# Single worker (development)
-node dist/workers/rate-limit-worker.js
-```
-
-### Worker Features:
-- **Cluster support**: Scales across CPU cores
-- **Auto-restart**: Failed workers are automatically restarted
-- **Health checks**: 30-second interval monitoring
-- **Queue backlog alerts**: Warns when >1000 jobs waiting
-- **Failure monitoring**: Alerts when >50 jobs fail

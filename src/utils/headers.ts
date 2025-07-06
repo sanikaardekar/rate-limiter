@@ -19,10 +19,14 @@ export class HeadersUtil {
       'X-RateLimit-Limit': rule.maxRequests.toString(),
       'X-RateLimit-Remaining': info.remainingRequests.toString(),
       'X-RateLimit-Reset': Math.ceil(info.resetTime / 1000).toString(),
+      'RateLimit-Limit': rule.maxRequests.toString(),
+      'RateLimit-Remaining': info.remainingRequests.toString(),
+      'RateLimit-Reset': Math.ceil(info.resetTime / 1000).toString(),
     };
 
     if (info.retryAfter !== undefined) {
       headers['X-RateLimit-RetryAfter'] = info.retryAfter.toString();
+      headers['Retry-After'] = info.retryAfter.toString();
     }
 
     return headers;
@@ -95,21 +99,8 @@ export class HeadersUtil {
     result: RateLimitResult,
     metadata: any
   ): void {
-    const logData = {
-      timestamp: new Date().toISOString(),
-      identifier,
-      ruleId: rule.id,
-      allowed: result.allowed,
-      requests: result.info.totalRequests,
-      remaining: result.info.remainingRequests,
-      resetTime: new Date(result.info.resetTime).toISOString(),
-      metadata,
-    };
-
-    if (result.allowed) {
-      console.log('Rate limit - Request allowed:', JSON.stringify(logData));
-    } else {
-      console.warn('Rate limit - Request blocked:', JSON.stringify(logData));
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[RateLimit] ${identifier} - Rule: ${rule.id}, Allowed: ${result.allowed}, Remaining: ${result.info.remainingRequests}`);
     }
   }
 }

@@ -41,6 +41,10 @@ export interface RateLimitHeaders {
   'X-RateLimit-Remaining': string;
   'X-RateLimit-Reset': string;
   'X-RateLimit-RetryAfter'?: string;
+  'RateLimit-Limit': string;
+  'RateLimit-Remaining': string;
+  'RateLimit-Reset': string;
+  'Retry-After'?: string;
 }
 
 export enum RateLimitStrategy {

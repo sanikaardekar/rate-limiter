@@ -52,7 +52,6 @@ export class QueueService {
       
       try {
         const deletedCount = await this.redisService.cleanupExpiredKeys(pattern);
-        console.log(`Cleaned up ${deletedCount} expired keys with pattern: ${pattern}`);
       } catch (error) {
         console.error('Error in cleanup job:', error);
         throw error;
@@ -61,7 +60,6 @@ export class QueueService {
 
     // Setup event listeners
     this.rateLimitQueue.on('completed', (job) => {
-      console.log(`Rate limit job ${job.id} completed`);
     });
 
     this.rateLimitQueue.on('failed', (job, err) => {
@@ -69,7 +67,6 @@ export class QueueService {
     });
 
     this.cleanupQueue.on('completed', (job) => {
-      console.log(`Cleanup job ${job.id} completed`);
     });
   }
 

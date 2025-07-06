@@ -66,12 +66,10 @@ export class RateLimiterMiddleware {
 
         if (!finalResult.allowed) {
           await this.queueCleanupJob(identifier, finalResult.rule);
-
           return this.options.onLimitReached(req, res, finalResult);
         }
 
         await this.queueIncrementJob(identifier, finalResult.rule);
-
         next();
       } catch (error) {
         console.error('Rate limiter middleware error:', error);

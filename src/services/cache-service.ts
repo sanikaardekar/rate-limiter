@@ -13,16 +13,7 @@ export class CacheService {
 
   async checkRateLimit(key: string, rule: RateLimitRule): Promise<RateLimitResult> {
     try {
-      const localData = this.getFromLocalCache(key);
-      if (localData && Date.now() < localData.resetTime) {
-        const allowed = localData.count <= rule.maxRequests;
-        return this.buildResult(localData, rule, allowed);
-      }
-
       const data = await this.redisService.incrementCounter(key, rule);
-      
-      this.setInLocalCache(key, data);
-
       const allowed = data.count <= rule.maxRequests;
       return this.buildResult(data, rule, allowed);
     } catch (error) {
@@ -59,24 +50,7 @@ export class CacheService {
     return { allowed, info, rule };
   }
 
-  private getFromLocalCache(key: string): CacheEntry | null {
-    const entry = this.localCache.get(key);
-    if (!entry) return null;
 
-    if (Date.now() > entry.resetTime) {
-      this.localCache.delete(key);
-      return null;
-    }
-
-    return entry;
-  }
-
-  private setInLocalCache(key: string, data: CacheEntry): void {
-    const timeToExpire = data.resetTime - Date.now();
-    if (timeToExpire > this.localCacheTTL / 2) {
-      this.localCache.set(key, data);
-    }
-  }
 
   private startLocalCacheCleanup(): void {
     setInterval(() => {

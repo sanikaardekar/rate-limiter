@@ -34,10 +34,7 @@ export class ApiServer {
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true }));
     
-    this.app.use((req: Request, res: Response, next: NextFunction) => {
-      console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - ${req.ip}`);
-      next();
-    });
+
   }
 
   private setupRateLimiting(): void {
@@ -64,7 +61,7 @@ export class ApiServer {
         message: 'Too many authentication attempts, please try again later',
         statusCode: 423,
         skipIf: (req) => !req.path.startsWith('/auth'),
-        algorithm: 'fixed', // Use fixed window for auth (simpler, stricter)
+        algorithm: 'fixed',
       },
       {
         id: 'burst',
@@ -98,6 +95,22 @@ export class ApiServer {
   }
 
   private setupRoutes(): void {
+    // Root route
+    this.app.get('/', (req: Request, res: Response) => {
+      res.json({
+        message: 'Rate Limiter API',
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        endpoints: {
+          health: '/health',
+          api: '/api/*',
+          auth: '/auth/*',
+          admin: '/admin/*',
+          test: '/test/*'
+        }
+      });
+    });
+
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({
         status: 'healthy',
