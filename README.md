@@ -10,7 +10,6 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - **Queue-Based Processing**: Asynchronous job processing with Bull queues
 - **Flexible Configuration**: Path-specific rules with custom key generators
 - **Monitoring & Admin**: Real-time stats and administrative controls
-- **Production Ready**: Error handling, logging, graceful shutdown, and algorithm fallback
 - **RFC Compliant**: Standard and legacy HTTP headers
 
 ## 📋 Table of Contents
@@ -19,11 +18,9 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - [Architecture](#architecture)
 - [Rate Limiting Rules](#rate-limiting-rules)
 - [API Endpoints](#api-endpoints)
-- [Configuration](#configuration)
 - [Monitoring](#monitoring)
 - [Testing](#testing)
 - [Assumptions & Limitations](#assumptions--limitations)
-- [Production Deployment](#production-deployment)
 
 ## 🏃 Quick Start
 
@@ -128,18 +125,164 @@ curl http://localhost:3000/admin/stats
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Core Components
+### Request Flow Diagram
 
-### Data Flow
+```
+┌─────────────┐
+│   Client    │
+│  Request    │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Express.js Server                            │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │            Rate Limiter Middleware                 │    │
+│  │                                                     │    │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │    │
+│  │  │ Global  │  │   API   │  │  Auth   │  │ Burst   │ │    │
+│  │  │15min/1k │  │1min/100 │  │5min/5   │  │1sec/10  │ │    │
+│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │    │
+│  │       │           │           │           │         │    │
+│  │       └───────────┼───────────┼───────────┘         │    │
+│  │                   │           │                     │    │
+│  │              ┌────▼───────────▼────┐                │    │
+│  │              │  Most Restrictive   │                │    │
+│  │              │    Rule Wins        │                │    │
+│  │              └────┬────────────────┘                │    │
+│  └───────────────────┼─────────────────────────────────┘    │
+└──────────────────────┼──────────────────────────────────────┘
+                       │
+            ┌──────────▼──────────┐
+            │     Decision        │
+            └──────────┬──────────┘
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+        ▼              │              ▼
+  ┌──────────┐         │        ┌──────────┐
+  │  ALLOW   │         │        │  BLOCK   │
+  └─────┬────┘         │        └─────┬────┘
+        │              │              │
+        ▼              │              ▼
+┌──────────────┐       │      ┌──────────────┐
+│ Process      │       │      │ Return 429   │
+│ Request      │       │      │ or 423       │
+│ Normally     │       │      │ + Headers    │
+└──────────────┘       │      └──────────────┘
+        │              │              │
+        └──────────────┼──────────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Queue Async Job │
+              │ (Increment +    │
+              │  Cleanup)       │
+              └─────────────────┘
+```
+
+### Cache Service Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cache Service                            │
+│                                                             │
+│  ┌─────────────────┐           ┌─────────────────────────┐  │
+│  │  Local Cache    │           │     Redis Service       │  │
+│  │  (In-Memory)    │           │                         │  │
+│  │                 │           │  ┌─────────────────────┐ │  │
+│  │ ┌─────────────┐ │    Fast   │  │ Sliding Window      │ │  │
+│  │ │    Key1     │ │◄─────────►│  │ (Sorted Sets)       │ │  │
+│  │ │ count: 5    │ │   Lookup  │  │                     │ │  │
+│  │ │ reset: 1234 │ │           │  │ ZADD key timestamp  │ │  │
+│  │ └─────────────┘ │           │  │ ZCOUNT key range    │ │  │
+│  │                 │           │  │ ZREMRANGEBYSCORE    │ │  │
+│  │ ┌─────────────┐ │           │  └─────────────────────┘ │  │
+│  │ │    Key2     │ │           │                         │  │
+│  │ │ count: 12   │ │           │  ┌─────────────────────┐ │  │
+│  │ │ reset: 5678 │ │  Fallback │  │ Fixed Window        │ │  │
+│  │ └─────────────┘ │◄─────────►│  │ (String + JSON)     │ │  │
+│  └─────────────────┘           │  │                     │ │  │
+│                                │  │ SET key data EX ttl │ │  │
+│                                │  │ GET key             │ │  │
+│                                │  └─────────────────────┘ │  │
+│                                └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Queue Processing Flow
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   API Request   │    │  Queue Service  │    │ Rate Limit      │
+│   Processing    │    │                 │    │ Worker          │
+│                 │    │                 │    │ (Optional)      │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          │ 1. Create Job        │                      │
+          ├─────────────────────►│                      │
+          │                      │                      │
+          │ 2. Return Response   │                      │
+          │    Immediately       │                      │
+          │◄─────────────────────┤                      │
+          │                      │                      │
+          │                      │ 3. Process Job       │
+          │                      │     Async            │
+          │                      ├─────────────────────►│
+          │                      │                      │
+          │                      │                      │ 4. Update Redis
+          │                      │                      │    Counters
+          │                      │                      │
+          │                      │ 5. Job Complete      │
+          │                      │◄─────────────────────┤
+          │                      │                      │
+
+┌─────────────────────────────────────────────────────────────┐
+│                    Job Types                                │
+│                                                             │
+│  INCREMENT Job:                 CLEANUP Job:                │
+│  • Update request count         • Remove expired entries   │
+│  • Add timestamp to ZSET        • Clean up old data        │
+│  • Set TTL                      • Optimize memory usage     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow Summary
 
 1. **Request arrives** → Express.js server
 2. **Rate limiter middleware** → Checks all applicable rules
-3. **Sliding window check** → Redis sorted sets track request timestamps
-4. **Expired requests removed** → Cleanup old entries outside window
-5. **Current count calculated** → Count requests in sliding window
-6. **Decision made** → Allow/block request based on limits
-7. **Queue job** → Async increment/cleanup operations
+3. **Cache service** → Checks local cache first, then Redis
+4. **Sliding window check** → Redis sorted sets track request timestamps
+5. **Expired requests removed** → Cleanup old entries outside window
+6. **Current count calculated** → Count requests in sliding window
+7. **Decision made** → Allow/block request based on limits
 8. **Response sent** → With appropriate headers and status
+9. **Queue job** → Async increment/cleanup operations (background)
+
+### Algorithm Comparison
+
+```
+Fixed Window vs Sliding Window:
+
+Fixed Window (Fallback):
+┌─────────┬─────────┬─────────┬─────────┐
+│ Window1 │ Window2 │ Window3 │ Window4 │
+│ 0-59s   │ 60-119s │120-179s │180-239s │
+│ 10 req  │ 10 req  │ 10 req  │ 10 req  │
+└─────────┴─────────┴─────────┴─────────┘
+Problem: 20 requests possible at boundary (59s + 60s)
+
+Sliding Window (Primary):
+┌─────────────────────────────────────────┐
+│        60-second sliding window         │
+│  ┌─────────────────────────────────┐    │
+│  │     Current window (any time)   │    │
+│  │         Max 10 requests         │    │
+│  └─────────────────────────────────┘    │
+└─────────────────────────────────────────┘
+Benefit: Smooth rate limiting, no boundary bursts
+```
 
 ### Key Components
 
@@ -148,6 +291,7 @@ curl http://localhost:3000/admin/stats
 - **`CacheService`**: Dual-layer caching (Redis + in-memory)
 - **`RedisService`**: Sliding window counter with Redis sorted sets
 - **`QueueService`**: Async processing for increments and cleanup
+- **`RateLimitWorker`**: Background job processor with health monitoring
 - **`HeadersUtil`**: RFC-compliant rate limit headers
 
 ## 📊 Rate Limiting Rules
@@ -217,39 +361,6 @@ curl -X POST http://localhost:3000/admin/reset-rate-limit \
 Parameters:
 - `identifier`: IP address or custom identifier
 - `ruleId`: Specific rule to reset (optional, defaults to all)
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-```bash
-# Redis Configuration
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=your_password
-
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-
-# CORS Configuration
-ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
-```
-
-### Custom Rate Limiting Rules
-
-```typescript
-const customRules: RateLimitRule[] = [
-  {
-    id: 'custom',
-    windowMs: 60000, // 1 minute
-    maxRequests: 50,
-    message: 'Custom rate limit exceeded',
-    keyGenerator: (req) => `${req.ip}-${req.headers['user-agent']}`,
-    skipIf: (req) => req.path.startsWith('/public'),
-  }
-];
-```
 
 ## 📈 Monitoring
 
@@ -399,17 +510,26 @@ redis-cli get "rate_limit:127.0.0.1:api"
 3. **DDoS Protection**: Consider upstream rate limiting (CDN/Load Balancer)
 4. **Input Validation**: Validate all admin endpoint inputs
 
+## 👷 Rate Limit Worker
 
-## 🤝 Contributing
+The **Rate Limit Worker** processes background jobs to keep the API responsive:
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
+### What it does:
+- **Processes increment jobs**: Updates Redis counters asynchronously
+- **Handles cleanup jobs**: Removes expired rate limit entries
+- **Health monitoring**: Tracks queue stats and alerts on issues
+- **Graceful shutdown**: Completes active jobs before stopping
 
-## 📞 Support
+### Running Workers:
 
-For issues and questions:
-- Create an issue in the repository
-- Check existing documentation
-- Review the test cases for usage examples
+```bash
+# Single worker (development)
+node dist/workers/rate-limit-worker.js
+```
+
+### Worker Features:
+- **Cluster support**: Scales across CPU cores
+- **Auto-restart**: Failed workers are automatically restarted
+- **Health checks**: 30-second interval monitoring
+- **Queue backlog alerts**: Warns when >1000 jobs waiting
+- **Failure monitoring**: Alerts when >50 jobs fail
