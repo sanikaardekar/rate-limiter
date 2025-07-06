@@ -41,7 +41,6 @@ export class RateLimiterMiddleware {
           this.options.rules.map(rule => this.checkRule(req, rule))
         );
 
-        // Find the most restrictive result (lowest remaining requests or first blocked)
         const blockedResult = results.find(result => !result.allowed);
         const finalResult = blockedResult || results.reduce((most, current) => 
           current.info.remainingRequests < most.info.remainingRequests ? current : most

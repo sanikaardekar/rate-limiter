@@ -6,7 +6,7 @@ export interface RateLimitRule {
   skipIf?: (req: any) => boolean; 
   message?: string; 
   statusCode?: number;
-  algorithm?: 'fixed' | 'sliding'; // Rate limiting algorithm
+  algorithm?: 'fixed' | 'sliding';
 }
 
 export interface RateLimitInfo {
