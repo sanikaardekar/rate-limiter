@@ -71,12 +71,6 @@ npm run dev
 npm start
 ```
 
-### Available Scripts
-
-- `npm run dev` - Start development server with hot reload
-- `npm run build` - Compile TypeScript to JavaScript
-- `npm start` - Start production server from compiled code
-
 The server will start on `http://localhost:3000`
 
 ### Basic Usage
@@ -260,7 +254,6 @@ Benefit: Smooth rate limiting, no boundary bursts
 - **`CacheService`**: Dual-layer caching (Redis + in-memory)
 - **`RedisService`**: Sliding window counter with Redis sorted sets
 - **`QueueService`**: Async processing for increments and cleanup
-- **`RateLimitWorker`**: Background job processor with health monitoring
 - **`HeadersUtil`**: RFC-compliant rate limit headers
 
 ## 📊 Rate Limiting Rules
