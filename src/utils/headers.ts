@@ -156,7 +156,11 @@ export class HeadersUtil {
       }
     };
     
-    console.log(JSON.stringify(logData));
+    if (result.allowed) {
+      console.log(JSON.stringify(logData));
+    } else {
+      console.warn(JSON.stringify(logData));
+    }
   }
 
   static logError(type: 'redis' | 'increment' | 'rule', error: Error, context?: any): void {

@@ -204,7 +204,7 @@ export class RateLimitTestClient {
     await this.makeRequest('GET', '/admin/stats', undefined, 'admin');
     await this.makeRequest('GET', '/admin/queue-stats', undefined, 'admin');
     await this.makeRequest('POST', '/admin/reset-rate-limit', {
-      identifier: '127.0.0.1',
+      identifier: this.getClientIdentifier(),
       ruleId: 'api'
     }, 'admin');
     
@@ -299,8 +299,12 @@ export class RateLimitTestClient {
 
   private async resetRateLimits(): Promise<void> {
     await this.makeRequest('POST', '/admin/reset-rate-limit', {
-      identifier: '127.0.0.1'
+      identifier: this.getClientIdentifier()
     }, 'admin-reset');
+  }
+
+  private getClientIdentifier(): string {
+    return process.env.NODE_ENV === 'test' ? '127.0.0.1' : '::1';
   }
 
   private async makeRequest(

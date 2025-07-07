@@ -235,10 +235,18 @@ export class ApiServer {
       try {
         const { identifier, ruleId } = req.body;
         
-        if (!identifier) {
+        if (!identifier || typeof identifier !== 'string') {
           res.status(400).json({
             error: 'Bad Request',
-            message: 'identifier is required',
+            message: 'identifier is required and must be a string',
+          });
+          return;
+        }
+        
+        if (ruleId && typeof ruleId !== 'string') {
+          res.status(400).json({
+            error: 'Bad Request',
+            message: 'ruleId must be a string',
           });
           return;
         }

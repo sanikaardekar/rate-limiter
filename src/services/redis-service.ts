@@ -31,7 +31,12 @@ export class RedisService {
       if (!data) return null;
       
       try {
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        if (typeof parsed === 'object' && parsed !== null && 
+            typeof parsed.count === 'number' && typeof parsed.resetTime === 'number') {
+          return parsed;
+        }
+        return null;
       } catch (parseError) {
         console.error('JSON parse error for key:', key, 'data:', data);
         return null;
@@ -368,7 +373,10 @@ export class RedisService {
       HeadersUtil.logError('redis', error as Error, { operation: 'slidingWindowCheck', key, rule: rule.id, increment });
       if (increment) {
         const result = await this.incrementCounterFixedWindow(key, rule);
-        return { ...result, allowed: result.allowed ?? result.count <= rule.maxRequests };
+        return { 
+        ...result, 
+        allowed: typeof result.allowed === 'boolean' ? result.allowed : (result.count || 0) <= rule.maxRequests 
+      };
       } else {
         const result = await this.getCurrentCountFixedWindow(key, rule);
         return { ...result, allowed: result.count < rule.maxRequests };

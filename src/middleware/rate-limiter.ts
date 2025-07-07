@@ -230,13 +230,26 @@ export class RateLimiterMiddleware {
     const timeSinceLastRequest = now - lastRequest;
     
     const burstRule = this.options.rules.find(rule => rule.id === 'burst');
-    if (!burstRule) return 0;
+    if (!burstRule || burstRule.maxRequests === 0) return 0;
     
     const minInterval = burstRule.windowMs / burstRule.maxRequests;
     const delay = Math.max(0, minInterval - timeSinceLastRequest);
     
     this.throttleMap.set(identifier, now);
+    this.cleanupThrottleMap();
     return delay;
+  }
+
+  private cleanupThrottleMap(): void {
+    if (this.throttleMap.size > 1000) {
+      const now = Date.now();
+      const cutoff = now - 60000;
+      for (const [key, timestamp] of this.throttleMap.entries()) {
+        if (timestamp < cutoff) {
+          this.throttleMap.delete(key);
+        }
+      }
+    }
   }
 
   private delay(ms: number): Promise<void> {

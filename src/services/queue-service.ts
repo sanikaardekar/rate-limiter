@@ -28,7 +28,8 @@ export class QueueService {
   }
 
   async startProcessing(): Promise<void> {
-    this.rateLimitQueue.process('process-rate-limit', 10, async (job) => {
+    try {
+      this.rateLimitQueue.process('process-rate-limit', 10, async (job) => {
       const { type, key, rule, timestamp } = job.data;
       
       try {
@@ -50,7 +51,7 @@ export class QueueService {
       }
     });
 
-    this.cleanupQueue.process('cleanup-expired', 1, async (job) => {
+      this.cleanupQueue.process('cleanup-expired', 1, async (job) => {
       const { pattern } = job.data;
       
       try {
@@ -61,9 +62,13 @@ export class QueueService {
       }
     });
 
-    this.rateLimitQueue.on('failed', (job, err) => {
-      console.error(`Rate limit job ${job.id} failed:`, err);
-    });
+      this.rateLimitQueue.on('failed', (job, err) => {
+        console.error(`Rate limit job ${job.id} failed:`, err);
+      });
+    } catch (error) {
+      console.error('Failed to setup queue processors:', error);
+      throw error;
+    }
   }
 
   private setupPeriodicCleanup(): void {
