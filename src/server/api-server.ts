@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { RateLimiterMiddleware } from '../middleware/rate-limiter';
 import { CacheService } from '../services/cache-service';
 import { QueueService } from '../services/queue-service';
+import { RateLimitWorker } from '../workers/rate-limit-worker';
 import { RateLimitRule } from '../types';
 
 export class ApiServer {
@@ -12,12 +13,14 @@ export class ApiServer {
   private rateLimiter!: RateLimiterMiddleware; 
   private cacheService: CacheService;
   private queueService: QueueService;
+  private worker: RateLimitWorker;
 
   constructor(port: number = 3000) {
     this.app = express();
     this.port = port;
-    this.cacheService = new CacheService();
+    this.cacheService = new CacheService(true);
     this.queueService = new QueueService();
+    this.worker = new RateLimitWorker();
     
     this.setupMiddleware();
     this.setupRateLimiting();
@@ -49,7 +52,7 @@ export class ApiServer {
       {
         id: 'api',
         windowMs: 60 * 1000, 
-        maxRequests: 100, 
+        maxRequests: 300, 
         keyGenerator: (req) => `${req.ip}--${req.path}`,
         skipIf: (req) => req.path.startsWith('/health'),
         algorithm: 'sliding', 
@@ -61,12 +64,12 @@ export class ApiServer {
         message: 'Too many authentication attempts, please try again later',
         statusCode: 423,
         skipIf: (req) => !req.path.startsWith('/auth'),
-        algorithm: 'fixed',
+        algorithm: 'sliding',
       },
       {
         id: 'burst',
         windowMs: 1000, 
-        maxRequests: 10, 
+        maxRequests: 100, 
         message: 'Request rate too high, please slow down',
         skipIf: (req) => req.path.startsWith('/health'),
         algorithm: 'sliding',
@@ -77,6 +80,9 @@ export class ApiServer {
       rules,
       standardHeaders: true,
       legacyHeaders: true,
+      enableLocalThrottle: true,
+      maxThrottleDelay: 500,
+      enableInMemoryFallback: true,
       onLimitReached: (req, res, result) => {
         res.status(result.rule.statusCode || 429).json({
           error: 'Rate limit exceeded',
@@ -284,6 +290,8 @@ export class ApiServer {
   }
 
   async start(): Promise<void> {
+    await this.worker.start();
+    
     return new Promise((resolve) => {
       this.app.listen(this.port, () => {
         console.log(`API Server running on port ${this.port}`);
@@ -298,10 +306,8 @@ export class ApiServer {
   }
 
   async stop(): Promise<void> {
-    return new Promise((resolve) => {
-      console.log('Shutting down API server...');
-      resolve();
-    });
+    console.log('Shutting down API server...');
+    await this.worker.stop();
   }
 
   getApp(): express.Application {

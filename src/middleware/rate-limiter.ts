@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { CacheService } from '../services/cache-service';
 import { QueueService } from '../services/queue-service';
+import { RedisService } from '../services/redis-service';
 import { HeadersUtil } from '../utils/headers';
 import { RateLimitRule, QueueMessage } from '../types';
 
@@ -11,16 +12,20 @@ export interface RateLimiterOptions {
   keyGenerator?: (req: Request) => string;
   onLimitReached?: (req: Request, res: Response, result: any) => void;
   standardHeaders?: boolean; 
-  legacyHeaders?: boolean; 
+  legacyHeaders?: boolean;
+  enableLocalThrottle?: boolean;
+  maxThrottleDelay?: number;
+  enableInMemoryFallback?: boolean;
 }
 
 export class RateLimiterMiddleware {
   private cacheService: CacheService;
   private queueService: QueueService;
   private options: Required<RateLimiterOptions>;
+  private throttleMap: Map<string, number> = new Map();
 
   constructor(options: RateLimiterOptions) {
-    this.cacheService = new CacheService();
+    this.cacheService = new CacheService(options.enableInMemoryFallback);
     this.queueService = new QueueService();
     
     this.options = {
@@ -30,6 +35,9 @@ export class RateLimiterMiddleware {
       onLimitReached: this.defaultOnLimitReached,
       standardHeaders: true,
       legacyHeaders: true,
+      enableLocalThrottle: false,
+      maxThrottleDelay: 1000,
+      enableInMemoryFallback: false,
       ...options,
     };
   }
@@ -37,14 +45,40 @@ export class RateLimiterMiddleware {
   middleware = () => {
     return async (req: Request, res: Response, next: NextFunction) => {
       try {
+        const identifier = this.options.keyGenerator(req);
+        
+        // Apply local throttle if enabled
+        if (this.options.enableLocalThrottle) {
+          const throttleDelay = await this.calculateThrottleDelay(identifier);
+          if (throttleDelay > 0) {
+            await this.delay(Math.min(throttleDelay, this.options.maxThrottleDelay));
+          }
+        }
+
+        // Check all rules atomically - any failure blocks request
         const results = await Promise.all(
-          this.options.rules.map(rule => this.checkRule(req, rule))
+          this.options.rules.map(rule => this.checkRule(req, rule, true))
         );
 
-        const blockedResult = results.find(result => !result.allowed);
-        const finalResult = blockedResult || results.reduce((most, current) => 
-          current.info.remainingRequests < most.info.remainingRequests ? current : most
-        );
+        const activeResults = results.filter(result => result !== null);
+
+        
+        if (activeResults.length === 0) {
+          return next();
+        }
+
+        // ANY blocked result blocks the entire request
+        const blockedResult = activeResults.find(result => !result.allowed);
+        if (blockedResult) {
+          await this.queueCleanupJob(identifier, blockedResult.rule);
+          return this.options.onLimitReached(req, res, blockedResult);
+        }
+        
+        // Find most restrictive allowed rule for headers
+        const finalResult = activeResults.reduce((most, current) => {
+          // Most restrictive = lowest remaining requests
+          return current.info.remainingRequests < most.info.remainingRequests ? current : most;
+        });
 
         if (!finalResult) {
           return next();
@@ -58,35 +92,35 @@ export class RateLimiterMiddleware {
           this.setStandardHeaders(res, finalResult);
         }
 
+        this.addWarningHeaders(res, finalResult);
         HeadersUtil.addSecurityHeaders(res);
 
-        const identifier = this.options.keyGenerator(req);
         const metadata = HeadersUtil.getRequestMetadata(req);
         HeadersUtil.logRateLimitEvent(identifier, finalResult.rule, finalResult, metadata);
 
-        if (!finalResult.allowed) {
-          await this.queueCleanupJob(identifier, finalResult.rule);
-          return this.options.onLimitReached(req, res, finalResult);
-        }
+        // Setup post-response handling for skip logic
+        this.setupPostResponseHandling(req, res, activeResults);
 
-        await this.queueIncrementJob(identifier, finalResult.rule);
         next();
       } catch (error) {
-        console.error('Rate limiter middleware error:', error);
+        const { HeadersUtil } = require('../utils/headers');
+        HeadersUtil.logError('rule', error as Error, { operation: 'middleware' });
         next();
       }
     };
   };
 
-  private async checkRule(req: Request, rule: RateLimitRule) {
+  private async checkRule(req: Request, rule: RateLimitRule, increment: boolean = true) {
     if (rule.skipIf && rule.skipIf(req)) {
-      return this.createAllowedResult(rule);
+      return null; 
     }
 
     const identifier = rule.keyGenerator ? rule.keyGenerator(req) : this.options.keyGenerator(req);
     const key = HeadersUtil.generateRateLimitKey(identifier, rule);
 
-    return await this.cacheService.checkRateLimit(key, rule);
+    return increment 
+      ? await this.cacheService.checkRateLimit(key, rule)
+      : await this.cacheService.getCurrentCount(key, rule);
   }
 
   private createAllowedResult(rule: RateLimitRule) {
@@ -105,9 +139,20 @@ export class RateLimiterMiddleware {
     res.setHeader('RateLimit-Limit', result.rule.maxRequests);
     res.setHeader('RateLimit-Remaining', result.info.remainingRequests);
     res.setHeader('RateLimit-Reset', Math.ceil(result.info.resetTime / 1000));
+    res.setHeader('RateLimit-Policy', `${result.rule.maxRequests};w=${result.rule.windowMs / 1000}`);
     
     if (result.info.retryAfter) {
       res.setHeader('Retry-After', result.info.retryAfter);
+    }
+  }
+
+  private addWarningHeaders(res: Response, result: any): void {
+    const remainingPercent = (result.info.remainingRequests / result.rule.maxRequests) * 100;
+    
+    if (remainingPercent <= 10 && remainingPercent > 0) {
+      res.setHeader('X-RateLimit-Warning', 'Rate limit nearly exceeded');
+    } else if (remainingPercent <= 20 && remainingPercent > 0) {
+      res.setHeader('X-RateLimit-Warning', 'Approaching rate limit');
     }
   }
 
@@ -174,5 +219,81 @@ export class RateLimiterMiddleware {
         await this.cacheService.resetRateLimit(key);
       }
     }
+    
+    // Clear local throttle data
+    this.throttleMap.delete(identifier);
+  }
+
+  private async calculateThrottleDelay(identifier: string): Promise<number> {
+    const lastRequest = this.throttleMap.get(identifier) || 0;
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastRequest;
+    
+    const burstRule = this.options.rules.find(rule => rule.id === 'burst');
+    if (!burstRule) return 0;
+    
+    const minInterval = burstRule.windowMs / burstRule.maxRequests;
+    const delay = Math.max(0, minInterval - timeSinceLastRequest);
+    
+    this.throttleMap.set(identifier, now);
+    return delay;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private setupPostResponseHandling(req: Request, res: Response, results: any[]): void {
+    res.on('finish', () => {
+      const isSuccess = res.statusCode >= 200 && res.statusCode < 300;
+      const isError = res.statusCode >= 400;
+      const shouldRevert = (isSuccess && this.options.skipSuccessfulRequests) ||
+                          (isError && this.options.skipFailedRequests);
+      
+      if (shouldRevert) {
+        results.forEach(result => {
+          if (result && result.allowed) {
+            const identifier = this.options.keyGenerator(req);
+            this.revertRateLimit(identifier, result.rule);
+          }
+        });
+      }
+    });
+  }
+
+  private async revertRateLimit(identifier: string, rule: RateLimitRule): Promise<void> {
+    try {
+      const key = HeadersUtil.generateRateLimitKey(identifier, rule);
+      const redis = await RedisService.getInstance().getClient();
+      
+      const luaScript = `
+        local key = KEYS[1]
+        local windowStart = tonumber(ARGV[1])
+        
+        local entries = redis.call('ZREVRANGE', key, 0, 0, 'WITHSCORES')
+        if #entries > 0 then
+          redis.call('ZREM', key, entries[1])
+        end
+        
+        return redis.call('ZCARD', key)
+      `;
+      
+      const windowStart = Date.now() - rule.windowMs;
+      await redis.eval(luaScript, 1, key, windowStart.toString());
+    } catch (error) {
+      console.error('Error reverting rate limit:', error);
+    }
+  }
+
+  private async queueRevertJob(identifier: string, rule: RateLimitRule): Promise<void> {
+    const message: QueueMessage = {
+      type: 'RESET',
+      key: HeadersUtil.generateRateLimitKey(identifier, rule),
+      rule,
+      timestamp: Date.now(),
+      metadata: { operation: 'revert_increment' }
+    };
+
+    await this.queueService.addRateLimitJob(message);
   }
 }

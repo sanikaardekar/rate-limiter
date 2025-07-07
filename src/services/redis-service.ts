@@ -50,6 +50,16 @@ export class RedisService {
     }
   }
 
+  async getCurrentCount(key: string, rule: RateLimitRule): Promise<CacheEntry> {
+    const algorithm = rule.algorithm || 'sliding';
+    
+    if (algorithm === 'fixed') {
+      return await this.getCurrentCountFixedWindow(key, rule);
+    } else {
+      return await this.getCurrentCountSlidingWindow(key, rule);
+    }
+  }
+
   async incrementCounter(key: string, rule: RateLimitRule): Promise<CacheEntry> {
     const algorithm = rule.algorithm || 'sliding'; 
     
@@ -57,6 +67,67 @@ export class RedisService {
       return await this.incrementCounterFixedWindow(key, rule);
     } else {
       return await this.incrementCounterSlidingWindow(key, rule);
+    }
+  }
+
+  private async getCurrentCountSlidingWindow(key: string, rule: RateLimitRule): Promise<CacheEntry> {
+    const now = Date.now();
+    const windowStart = now - rule.windowMs;
+    const resetTime = now + rule.windowMs;
+
+    try {
+      const luaScript = `
+        local key = KEYS[1]
+        local windowStart = tonumber(ARGV[1])
+        local resetTime = tonumber(ARGV[2])
+        local now = tonumber(ARGV[3])
+        local windowMs = tonumber(ARGV[4])
+
+        -- ATOMIC: Remove expired entries and count
+        redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
+        local currentCount = redis.call('ZCARD', key)
+
+        -- Set TTL to prevent memory leaks
+        if currentCount > 0 then
+          redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
+        end
+
+        return cjson.encode({
+          count = currentCount,
+          resetTime = resetTime,
+          createdAt = now
+        })
+      `;
+
+      const result = await this.redis.eval(
+        luaScript,
+        1,
+        key,
+        windowStart.toString(),
+        resetTime.toString(),
+        now.toString(),
+        rule.windowMs.toString()
+      ) as string;
+
+      return JSON.parse(result);
+    } catch (error) {
+      const { HeadersUtil } = require('../utils/headers');
+      HeadersUtil.logError('redis', error as Error, { operation: 'getCurrentCountSlidingWindow', key, rule: rule.id });
+      return this.getCurrentCountFixedWindow(key, rule);
+    }
+  }
+
+  private async getCurrentCountFixedWindow(key: string, rule: RateLimitRule): Promise<CacheEntry> {
+    const now = Date.now();
+    const windowStart = Math.floor(now / rule.windowMs) * rule.windowMs;
+    const resetTime = windowStart + rule.windowMs;
+
+    const existing = await this.getRateLimitData(key);
+    
+    if (!existing || now >= existing.resetTime) {
+      return { count: 0, resetTime, createdAt: now };
+    } else {
+      return existing;
     }
   }
 
@@ -73,27 +144,50 @@ export class RedisService {
         local maxRequests = tonumber(ARGV[3])
         local resetTime = tonumber(ARGV[4])
         local requestId = ARGV[5]
+        local windowMs = tonumber(ARGV[6])
 
-        -- Remove expired entries
-        redis.call('ZREMRANGEBYSCORE', key, 0, windowStart)
-
-        -- Count current requests in window
+        -- ATOMIC: Remove expired, count, check, add with verification
+        redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
         local currentCount = redis.call('ZCARD', key)
-
-        -- Add current request
-        redis.call('ZADD', key, now, requestId)
-        redis.call('EXPIRE', key, math.ceil(resetTime / 1000))
-
-        local newCount = currentCount + 1
-
+        
+        -- Block if at or over limit
+        if currentCount >= maxRequests then
+          redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
+          return cjson.encode({
+            count = currentCount,
+            resetTime = resetTime,
+            createdAt = now,
+            allowed = false
+          })
+        end
+        
+        -- Add and verify success
+        local addResult = redis.call('ZADD', key, now, requestId)
+        local finalCount = redis.call('ZCARD', key)
+        
+        -- Double-check we didn't exceed limit due to race/failure
+        if finalCount > maxRequests then
+          redis.call('ZREM', key, requestId)
+          finalCount = redis.call('ZCARD', key)
+          redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
+          return cjson.encode({
+            count = finalCount,
+            resetTime = resetTime,
+            createdAt = now,
+            allowed = false
+          })
+        end
+        
+        redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
         return cjson.encode({
-          count = newCount,
+          count = finalCount,
           resetTime = resetTime,
-          createdAt = now
+          createdAt = now,
+          allowed = true
         })
       `;
 
-      const requestId = `${now}-${Math.random()}`;
+      const requestId = `${now}-${Math.random().toString(36).substr(2, 9)}`;
       const result = await this.redis.eval(
         luaScript,
         1,
@@ -102,12 +196,14 @@ export class RedisService {
         windowStart.toString(),
         rule.maxRequests.toString(),
         resetTime.toString(),
-        requestId
+        requestId,
+        rule.windowMs.toString()
       ) as string;
 
       return JSON.parse(result);
     } catch (error) {
-      console.error('Error with sliding window, falling back to fixed window:', error);
+      const { HeadersUtil } = require('../utils/headers');
+      HeadersUtil.logError('redis', error as Error, { operation: 'incrementCounterSlidingWindow', key, rule: rule.id });
       return this.incrementCounterFixedWindow(key, rule);
     }
   }
@@ -130,15 +226,32 @@ export class RedisService {
 
         -- Reset if window has passed
         if now >= data.resetTime then
-          data = {count = 1, resetTime = resetTime, createdAt = now}
-        else
-          data.count = data.count + 1
+          data = {count = 0, resetTime = resetTime, createdAt = now}
         end
 
+        -- Check limit before incrementing
+        if data.count >= maxRequests then
+          local ttl = math.ceil((data.resetTime - now) / 1000)
+          redis.call('SETEX', key, ttl, cjson.encode(data))
+          return cjson.encode({
+            count = data.count,
+            resetTime = data.resetTime,
+            createdAt = data.createdAt,
+            allowed = false
+          })
+        end
+
+        -- Increment counter
+        data.count = data.count + 1
         local ttl = math.ceil((data.resetTime - now) / 1000)
         redis.call('SETEX', key, ttl, cjson.encode(data))
 
-        return cjson.encode(data)
+        return cjson.encode({
+          count = data.count,
+          resetTime = data.resetTime,
+          createdAt = data.createdAt,
+          allowed = true
+        })
       `;
 
       const result = await this.redis.eval(
@@ -194,11 +307,119 @@ export class RedisService {
     }
   }
 
+  async slidingWindowCheck(key: string, rule: RateLimitRule, increment: boolean = false): Promise<CacheEntry & { allowed: boolean }> {
+    const now = Date.now();
+    const windowStart = now - rule.windowMs;
+    const resetTime = now + rule.windowMs;
+
+    try {
+      const luaScript = `
+        local key = KEYS[1]
+        local now = tonumber(ARGV[1])
+        local windowStart = tonumber(ARGV[2])
+        local maxRequests = tonumber(ARGV[3])
+        local resetTime = tonumber(ARGV[4])
+        local increment = ARGV[5] == 'true'
+        local requestId = ARGV[6]
+        local windowMs = tonumber(ARGV[7])
+
+        -- ATOMIC: Clean expired, count, check limit, optionally add
+        redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
+        local currentCount = redis.call('ZCARD', key)
+        
+        -- Check limit before any increment
+        local allowed = currentCount < maxRequests
+        local finalCount = currentCount
+        
+        if increment and allowed then
+          redis.call('ZADD', key, now, requestId)
+          finalCount = currentCount + 1
+        end
+        
+        if finalCount > 0 then
+          redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
+        end
+        
+        return cjson.encode({
+          count = finalCount,
+          resetTime = resetTime,
+          createdAt = now,
+          allowed = allowed
+        })
+      `;
+
+      const requestId = increment ? `${now}-${Math.random().toString(36).substr(2, 9)}` : '';
+      const result = await this.redis.eval(
+        luaScript,
+        1,
+        key,
+        now.toString(),
+        windowStart.toString(),
+        rule.maxRequests.toString(),
+        resetTime.toString(),
+        increment.toString(),
+        requestId,
+        rule.windowMs.toString()
+      ) as string;
+
+      return JSON.parse(result);
+    } catch (error) {
+      const { HeadersUtil } = require('../utils/headers');
+      HeadersUtil.logError('redis', error as Error, { operation: 'slidingWindowCheck', key, rule: rule.id, increment });
+      if (increment) {
+        const result = await this.incrementCounterFixedWindow(key, rule);
+        return { ...result, allowed: result.allowed ?? result.count <= rule.maxRequests };
+      } else {
+        const result = await this.getCurrentCountFixedWindow(key, rule);
+        return { ...result, allowed: result.count < rule.maxRequests };
+      }
+    }
+  }
+
   async getClient(): Promise<Redis> {
     return this.redis;
   }
 
   async disconnect(): Promise<void> {
     await this.redis.quit();
+  }
+
+  async revertIncrement(key: string, rule: RateLimitRule): Promise<void> {
+    const now = Date.now();
+    const windowStart = now - rule.windowMs;
+
+    try {
+      const luaScript = `
+        local key = KEYS[1]
+        local windowStart = tonumber(ARGV[1])
+        local windowMs = tonumber(ARGV[2])
+        
+        -- Remove most recent entry to revert increment
+        local entries = redis.call('ZREVRANGE', key, 0, 0, 'WITHSCORES')
+        if #entries > 0 then
+          redis.call('ZREM', key, entries[1])
+        end
+        
+        -- Clean expired and set TTL
+        redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
+        local count = redis.call('ZCARD', key)
+        if count > 0 then
+          redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
+        end
+        
+        return count
+      `;
+
+      await this.redis.eval(
+        luaScript,
+        1,
+        key,
+        windowStart.toString(),
+        rule.windowMs.toString()
+      );
+    } catch (error) {
+      const { HeadersUtil } = require('../utils/headers');
+      HeadersUtil.logError('redis', error as Error, { operation: 'revertIncrement', key, rule: rule.id });
+    }
   }
 }

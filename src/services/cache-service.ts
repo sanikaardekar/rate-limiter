@@ -4,20 +4,38 @@ import { RateLimitRule, CacheEntry, RateLimitResult, RateLimitInfo } from '../ty
 export class CacheService {
   private redisService: RedisService;
   private localCache: Map<string, CacheEntry> = new Map();
-  private localCacheTTL: number = 60000; 
+  private localCacheTTL: number = 60000;
+  private enableInMemoryFallback: boolean = false; 
 
-  constructor() {
+  constructor(enableInMemoryFallback: boolean = false) {
     this.redisService = RedisService.getInstance();
+    this.enableInMemoryFallback = enableInMemoryFallback;
     this.startLocalCacheCleanup();
   }
 
   async checkRateLimit(key: string, rule: RateLimitRule): Promise<RateLimitResult> {
     try {
-      const data = await this.redisService.incrementCounter(key, rule);
-      const allowed = data.count <= rule.maxRequests;
-      return this.buildResult(data, rule, allowed);
+      const data = await this.redisService.slidingWindowCheck(key, rule, true);
+
+      return this.buildResult(data, rule, data.allowed);
     } catch (error) {
-      console.error('Error checking rate limit:', error);
+      console.error(`[ERROR] Redis failed for key=${key}, rule=${rule.id}:`, error instanceof Error ? error.message : error);
+      const { HeadersUtil } = require('../utils/headers');
+      HeadersUtil.logError('redis', error as Error, { operation: 'checkRateLimit', key, rule: rule.id });
+      
+      if (this.enableInMemoryFallback) {
+        return this.checkRateLimitInMemory(key, rule);
+      }
+      return this.buildDefaultResult(rule, true);
+    }
+  }
+
+  async getCurrentCount(key: string, rule: RateLimitRule): Promise<RateLimitResult> {
+    try {
+      const data = await this.redisService.slidingWindowCheck(key, rule, false);
+      return this.buildResult(data, rule, data.allowed);
+    } catch (error) {
+      console.error('Error getting current count:', error);
       return this.buildDefaultResult(rule, true);
     }
   }
@@ -99,5 +117,24 @@ export class CacheService {
 
   clearLocalCache(): void {
     this.localCache.clear();
+  }
+
+  private checkRateLimitInMemory(key: string, rule: RateLimitRule): RateLimitResult {
+    const now = Date.now();
+    const existing = this.localCache.get(key);
+    
+    let data: CacheEntry;
+    if (!existing || now >= existing.resetTime) {
+      const resetTime = rule.algorithm === 'sliding' 
+        ? now + rule.windowMs 
+        : Math.floor(now / rule.windowMs) * rule.windowMs + rule.windowMs;
+      data = { count: 1, resetTime, createdAt: now };
+    } else {
+      data = { ...existing, count: existing.count + 1 };
+    }
+    
+    this.localCache.set(key, data);
+    const allowed = data.count <= rule.maxRequests;
+    return this.buildResult(data, rule, allowed);
   }
 }

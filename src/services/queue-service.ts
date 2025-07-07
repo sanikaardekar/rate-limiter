@@ -24,6 +24,10 @@ export class QueueService {
   }
 
   private setupQueueProcessors(): void {
+    // Processors will be set up when startProcessing is called
+  }
+
+  async startProcessing(): Promise<void> {
     this.rateLimitQueue.process('process-rate-limit', 10, async (job) => {
       const { type, key, rule, timestamp } = job.data;
       
@@ -42,31 +46,23 @@ export class QueueService {
         }
       } catch (error) {
         console.error(`Error processing ${type} job:`, error);
-        throw error; // This will cause Bull to retry the job
+        throw error;
       }
     });
 
-    // Process cleanup jobs
     this.cleanupQueue.process('cleanup-expired', 1, async (job) => {
       const { pattern } = job.data;
       
       try {
-        const deletedCount = await this.redisService.cleanupExpiredKeys(pattern);
+        await this.redisService.cleanupExpiredKeys(pattern);
       } catch (error) {
         console.error('Error in cleanup job:', error);
         throw error;
       }
     });
 
-    // Setup event listeners
-    this.rateLimitQueue.on('completed', (job) => {
-    });
-
     this.rateLimitQueue.on('failed', (job, err) => {
       console.error(`Rate limit job ${job.id} failed:`, err);
-    });
-
-    this.cleanupQueue.on('completed', (job) => {
     });
   }
 

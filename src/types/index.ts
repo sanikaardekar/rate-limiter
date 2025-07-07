@@ -26,6 +26,7 @@ export interface CacheEntry {
   count: number;
   resetTime: number;
   createdAt: number;
+  allowed?: boolean;
 }
 
 export interface QueueMessage {

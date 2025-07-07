@@ -42,21 +42,56 @@ export class HeadersUtil {
     
     if (forwarded) {
       ip = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
+      ip = this.sanitizeIpAddress(ip.trim());
     } else if (realIp) {
       ip = Array.isArray(realIp) ? realIp[0] : realIp;
+      ip = this.sanitizeIpAddress(ip.trim());
     } else if (clientIp) {
       ip = Array.isArray(clientIp) ? clientIp[0] : clientIp;
+      ip = this.sanitizeIpAddress(ip.trim());
     } else if (cfConnectingIp) {
       ip = Array.isArray(cfConnectingIp) ? cfConnectingIp[0] : cfConnectingIp;
+      ip = this.sanitizeIpAddress(ip.trim());
     } else {
       ip = req.connection?.remoteAddress || req.socket?.remoteAddress || req.ip || 'unknown';
+      ip = this.sanitizeIpAddress(ip);
+      // Don't include port for localhost connections to avoid each request being treated as different client
+      if (ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') {
+        return ip;
+      }
+      const port = req.connection?.remotePort || '';
+      return port ? `${ip}:${port}` : ip;
     }
+    
+    return ip;
+  }
 
-    return ip.trim();
+  private static sanitizeIpAddress(ip: string): string {
+    const sanitized = ip.replace(/[\r\n\t\x00-\x1f\x7f-\x9f]/g, '').substring(0, 45);
+    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    const ipv6Regex = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::1$|^::$/;
+    
+    if (ipv4Regex.test(sanitized) || ipv6Regex.test(sanitized)) {
+      return sanitized;
+    }
+    
+    return sanitized || 'unknown';
   }
 
   static generateRateLimitKey(identifier: string, rule: RateLimitRule): string {
-    return `rate_limit:${rule.id}:${identifier}`;
+    const sanitizedId = identifier.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const ruleHash = this.hashString(rule.id + rule.windowMs + rule.maxRequests);
+    return `rl:${rule.id}:${ruleHash}:${sanitizedId}`;
+  }
+
+  private static hashString(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36);
   }
 
   static getUserAgent(req: any): string {
@@ -99,8 +134,42 @@ export class HeadersUtil {
     result: RateLimitResult,
     metadata: any
   ): void {
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[RateLimit] ${identifier} - Rule: ${rule.id}, Allowed: ${result.allowed}, Remaining: ${result.info.remainingRequests}`);
-    }
+    const logData = {
+      timestamp: new Date().toISOString(),
+      level: result.allowed ? 'info' : 'warn',
+      event: 'rate_limit_check',
+      identifier,
+      rule: {
+        id: rule.id,
+        limit: rule.maxRequests,
+        window: rule.windowMs
+      },
+      result: {
+        allowed: result.allowed,
+        remaining: result.info.remainingRequests,
+        resetTime: result.info.resetTime
+      },
+      request: {
+        method: metadata.method,
+        url: metadata.url,
+        userAgent: metadata.userAgent
+      }
+    };
+    
+    console.log(JSON.stringify(logData));
+  }
+
+  static logError(type: 'redis' | 'increment' | 'rule', error: Error, context?: any): void {
+    const logData = {
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      event: 'rate_limit_error',
+      errorType: type,
+      message: error.message,
+      stack: error.stack,
+      context
+    };
+    
+    console.error(JSON.stringify(logData));
   }
 }

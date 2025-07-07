@@ -5,6 +5,7 @@ interface RateLimitHeaders {
   'x-ratelimit-remaining'?: string;
   'x-ratelimit-reset'?: string;
   'x-ratelimit-retryafter'?: string;
+  'x-ratelimit-warning'?: string;
   'ratelimit-limit'?: string;
   'ratelimit-remaining'?: string;
   'ratelimit-reset'?: string;
@@ -19,6 +20,7 @@ interface TestResult {
   responseTime: number;
   timestamp: string;
   error?: string;
+  testType?: string;
 }
 
 export class RateLimitTestClient {
@@ -30,181 +32,282 @@ export class RateLimitTestClient {
   }
 
   async runTests(): Promise<void> {
-    console.log('Starting Comprehensive Rate Limit Tests\n');
+    console.log('Starting comprehensive rate limiter tests\n');
 
-    await this.testRootEndpoint();
-    await this.testHealthEndpoint();
-    await this.testNormalApiUsage();
+    await this.testBasicEndpoints();
     await this.testAllHttpMethods();
-    await this.testRateLimitExceeded();
     await this.testBurstProtection();
-    await this.testAllAuthEndpoints();
-    await this.testAdminEndpoints();
+    await this.testAuthRateLimiting();
+    await this.testApiRateLimiting();
+    await this.testGlobalRateLimiting();
     await this.testConcurrentRequests();
-    await this.testRecoveryAfterLimit();
-    await this.testErrorScenarios();
+    await this.testBoundaryConditions();
+    await this.testRecoveryBehavior();
+    await this.testAdminEndpoints();
+    await this.testErrorHandling();
     await this.testHeaderValidation();
-    await this.testGlobalRateLimit();
+    await this.testSecurityScenarios();
+    await this.testWorkerFunctionality();
+    await this.testSkipLogic();
 
     this.printSummary();
   }
 
-  private async testRootEndpoint(): Promise<void> {
-    console.log('Testing root endpoint');
-    await this.makeRequest('GET', '/');
-    console.log('Root endpoint test completed\n');
-  }
-
-  private async testHealthEndpoint(): Promise<void> {
-    console.log('Testing health endpoint');
+  private async testBasicEndpoints(): Promise<void> {
+    console.log('Testing basic endpoints...');
     
-    for (let i = 0; i < 5; i++) {
-      await this.makeRequest('GET', '/health');
-      await this.sleep(100);
-    }
+    await this.makeRequest('GET', '/', undefined, 'basic');
+    await this.makeRequest('GET', '/health', undefined, 'basic');
+    await this.makeRequest('GET', '/test/unlimited', undefined, 'basic');
+    await this.makeRequest('GET', '/test/limited', undefined, 'basic');
     
-    console.log('Health endpoint tests completed\n');
-  }
-
-  private async testNormalApiUsage(): Promise<void> {
-    console.log('Testing normal API usage');
-    
-    const endpoints = ['/api/data', '/test/limited'];
-    
-    for (const endpoint of endpoints) {
-      for (let i = 0; i < 10; i++) {
-        await this.makeRequest('GET', endpoint);
-        await this.sleep(50);
-      }
-    }
-    
-    console.log('Normal API usage tests completed\n');
+    console.log('Basic endpoints test completed\n');
   }
 
   private async testAllHttpMethods(): Promise<void> {
-    console.log('Testing all HTTP methods');
-    await this.makeRequest('GET', '/api/data');
-    await this.makeRequest('POST', '/api/data', { test: 'data' });
-    await this.makeRequest('PUT', '/api/data/123', { test: 'updated' });
-    await this.makeRequest('DELETE', '/api/data/123');
-    console.log('All HTTP methods tests completed\n');
-  }
-
-  private async testRateLimitExceeded(): Promise<void> {
-    console.log('Testing rate limit exceeded');
+    console.log('Testing all HTTP methods...');
     
-    const promises = [];
-    for (let i = 0; i < 15; i++) {
-      promises.push(this.makeRequest('GET', '/test/limited'));
-    }
+    await this.makeRequest('GET', '/api/data', undefined, 'http-methods');
+    await this.makeRequest('POST', '/api/data', { test: 'data' }, 'http-methods');
+    await this.makeRequest('PUT', '/api/data/123', { test: 'updated' }, 'http-methods');
+    await this.makeRequest('DELETE', '/api/data/123', undefined, 'http-methods');
+    await this.makeRequest('PATCH', '/api/data/123', { test: 'patched' }, 'http-methods');
     
-    await Promise.all(promises);
-    console.log('Rate limit exceeded tests completed\n');
+    console.log('HTTP methods test completed\n');
   }
 
   private async testBurstProtection(): Promise<void> {
-    console.log('Testing burst protection');
+    console.log('Testing burst protection (100 req/sec)...');
+    
+    await this.resetRateLimits();
     
     const promises = [];
-    for (let i = 0; i < 15; i++) {
-      promises.push(this.makeRequest('GET', '/api/data'));
+    for (let i = 0; i < 110; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'burst-protection'));
     }
     
     await Promise.all(promises);
-    console.log('Burst protection tests completed\n');
+    console.log('Burst protection test completed\n');
   }
 
-  private async testAllAuthEndpoints(): Promise<void> {
-    console.log('Testing all authentication endpoints');
+  private async testAuthRateLimiting(): Promise<void> {
+    console.log('Testing auth rate limiting (5 req/5min)...');
+    
+    await this.resetRateLimits();
     
     const authEndpoints = ['/auth/login', '/auth/register', '/auth/forgot-password'];
     
     for (const endpoint of authEndpoints) {
-      console.log(`Testing ${endpoint}`);
       for (let i = 0; i < 6; i++) {
         await this.makeRequest('POST', endpoint, {
           email: 'test@example.com',
-          password: 'password123',
-        });
-        await this.sleep(100);
+          password: 'password123'
+        }, 'auth-limiting');
       }
     }
     
-    console.log('All authentication endpoint tests completed\n');
+    console.log('Auth rate limiting test completed\n');
   }
 
-  private async testAdminEndpoints(): Promise<void> {
-    console.log('Testing admin endpoints');
-    await this.makeRequest('GET', '/admin/stats');
-    await this.makeRequest('GET', '/admin/queue-stats');
-    await this.makeRequest('POST', '/admin/reset-rate-limit', {
-      identifier: '127.0.0.1',
-      ruleId: 'api'
-    });
-    console.log('Admin endpoint tests completed\n');
-  }
-
-  private async testConcurrentRequests(): Promise<void> {
-    console.log('Testing concurrent requests');
+  private async testApiRateLimiting(): Promise<void> {
+    console.log('Testing API rate limiting (300 req/min)...');
+    
+    await this.resetRateLimits();
     
     const promises = [];
-    for (let i = 0; i < 20; i++) {
-      promises.push(this.makeRequest('GET', '/api/data'));
+    for (let i = 0; i < 50; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'api-limiting'));
     }
     
     await Promise.all(promises);
-    console.log('Concurrent request tests completed\n');
+    console.log('API rate limiting test completed\n');
   }
 
-  private async testRecoveryAfterLimit(): Promise<void> {
-    console.log('Testing recovery after rate limit');
+  private async testGlobalRateLimiting(): Promise<void> {
+    console.log('Testing global rate limiting (1000 req/15min)...');
     
-    for (let i = 0; i < 12; i++) {
-      await this.makeRequest('GET', '/test/limited');
-    }
+    await this.resetRateLimits();
     
-    console.log('Waiting for rate limit window to reset');
-    await this.sleep(5000); 
-    
-    await this.makeRequest('GET', '/test/limited');
-    console.log('Recovery tests completed\n');
-  }
-
-  private async testErrorScenarios(): Promise<void> {
-    console.log('Testing error scenarios');
-    await this.makeRequest('GET', '/nonexistent');
-    await this.makeRequest('POST', '/invalid/endpoint');
-    await this.makeRequest('POST', '/admin/reset-rate-limit');
-    console.log('Error scenario tests completed\n');
-  }
-
-  private async testHeaderValidation(): Promise<void> {
-    console.log('Testing rate limit headers validation');
-    const result = await this.makeRequestForHeaders('GET', '/api/data');
-    const hasLegacyHeaders = !!(result.rateLimitHeaders['x-ratelimit-limit']);
-    const hasStandardHeaders = !!(result.rateLimitHeaders['ratelimit-limit']);
-    console.log(`Headers validation - Legacy: ${hasLegacyHeaders}, Standard: ${hasStandardHeaders}`);
-    console.log('Header validation tests completed\n');
-  }
-
-  private async testGlobalRateLimit(): Promise<void> {
-    console.log('Testing global rate limit');
     const endpoints = ['/', '/api/data', '/test/limited'];
     const promises = [];
     
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 100; i++) {
       const endpoint = endpoints[i % endpoints.length];
-      promises.push(this.makeRequest('GET', endpoint));
+      promises.push(this.makeRequest('GET', endpoint, undefined, 'global-limiting'));
     }
     
     await Promise.all(promises);
-    console.log('Global rate limit tests completed\n');
+    console.log('Global rate limiting test completed\n');
+  }
+
+  private async testConcurrentRequests(): Promise<void> {
+    console.log('Testing concurrent requests...');
+    
+    await this.resetRateLimits();
+    
+    const promises = [];
+    for (let i = 0; i < 150; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'concurrent'));
+    }
+    
+    await Promise.all(promises);
+    console.log('Concurrent requests test completed\n');
+  }
+
+  private async testBoundaryConditions(): Promise<void> {
+    console.log('Testing boundary conditions...');
+    
+    await this.resetRateLimits();
+    
+    // Test exactly at burst limit
+    for (let i = 0; i < 100; i++) {
+      await this.makeRequest('GET', '/api/data', undefined, 'boundary-burst');
+    }
+    
+    // Test 101st request
+    await this.makeRequest('GET', '/api/data', undefined, 'boundary-burst-exceed');
+    
+    // Test exactly at auth limit
+    await this.resetRateLimits();
+    for (let i = 0; i < 5; i++) {
+      await this.makeRequest('POST', '/auth/login', { email: 'test@example.com' }, 'boundary-auth');
+    }
+    
+    // Test 6th request
+    await this.makeRequest('POST', '/auth/login', { email: 'test@example.com' }, 'boundary-auth-exceed');
+    
+    console.log('Boundary conditions test completed\n');
+  }
+
+  private async testRecoveryBehavior(): Promise<void> {
+    console.log('Testing recovery behavior...');
+    
+    // Exhaust burst limit
+    const promises = [];
+    for (let i = 0; i < 110; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'recovery-exhaust'));
+    }
+    await Promise.all(promises);
+    
+    console.log('Waiting for rate limit window to reset...');
+    await this.sleep(2000);
+    
+    // Test recovery
+    await this.makeRequest('GET', '/api/data', undefined, 'recovery-test');
+    
+    console.log('Recovery behavior test completed\n');
+  }
+
+  private async testAdminEndpoints(): Promise<void> {
+    console.log('Testing admin endpoints...');
+    
+    await this.makeRequest('GET', '/admin/stats', undefined, 'admin');
+    await this.makeRequest('GET', '/admin/queue-stats', undefined, 'admin');
+    await this.makeRequest('POST', '/admin/reset-rate-limit', {
+      identifier: '127.0.0.1',
+      ruleId: 'api'
+    }, 'admin');
+    
+    console.log('Admin endpoints test completed\n');
+  }
+
+  private async testErrorHandling(): Promise<void> {
+    console.log('Testing error handling...');
+    
+    await this.makeRequest('GET', '/nonexistent', undefined, 'error-handling');
+    await this.makeRequest('POST', '/invalid/endpoint', undefined, 'error-handling');
+    await this.makeRequest('POST', '/admin/reset-rate-limit', undefined, 'error-handling');
+    
+    console.log('Error handling test completed\n');
+  }
+
+  private async testHeaderValidation(): Promise<void> {
+    console.log('Testing header validation...');
+    
+    const result = await this.makeRequestForHeaders('GET', '/api/data');
+    const hasLegacyHeaders = !!(result.rateLimitHeaders['x-ratelimit-limit']);
+    const hasStandardHeaders = !!(result.rateLimitHeaders['ratelimit-limit']);
+    
+    console.log(`Legacy headers: ${hasLegacyHeaders ? 'Present' : 'Missing'}`);
+    console.log(`Standard headers: ${hasStandardHeaders ? 'Present' : 'Missing'}`);
+    
+    console.log('Header validation test completed\n');
+  }
+
+  private async testSecurityScenarios(): Promise<void> {
+    console.log('Testing security scenarios...');
+    
+    // Test malformed JSON
+    await this.makeRawRequest('POST', '/api/data', '{"invalid": json}', 'security');
+    
+    // Test large payload
+    const largePayload = 'x'.repeat(10000);
+    await this.makeRequest('POST', '/api/data', { data: largePayload }, 'security');
+    
+    // Test injection attempts
+    await this.makeRequest('POST', '/auth/login', {
+      email: "'; DROP TABLE users; --",
+      password: 'test'
+    }, 'security');
+    
+    await this.makeRequest('POST', '/api/data', {
+      content: '<script>alert("xss")</script>'
+    }, 'security');
+    
+    // Test header injection
+    await this.makeRawRequest('GET', '/api/data', undefined, 'security-headers', {
+      'X-Forwarded-For': '127.0.0.1\r\nX-Injected: malicious',
+      'X-Real-IP': '10.0.0.1\nX-Injected: header'
+    });
+    
+    console.log('Security scenarios test completed\n');
+  }
+
+  private async testWorkerFunctionality(): Promise<void> {
+    console.log('Testing worker functionality...');
+    
+    // Check queue stats before load
+    const statsBefore = await this.makeRequestForHeaders('GET', '/admin/queue-stats');
+    
+    // Generate load to create queue jobs
+    const promises = [];
+    for (let i = 0; i < 20; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'worker-test'));
+    }
+    await Promise.all(promises);
+    
+    // Wait for queue processing
+    await this.sleep(2000);
+    
+    // Check queue stats after processing
+    const statsAfter = await this.makeRequestForHeaders('GET', '/admin/queue-stats');
+    
+    console.log('Worker functionality test completed\n');
+  }
+
+  private async testSkipLogic(): Promise<void> {
+    console.log('Testing skip logic...');
+    
+    // Test successful request handling
+    await this.makeRequest('GET', '/api/data', undefined, 'skip-success');
+    
+    // Test error request handling
+    await this.makeRequest('GET', '/nonexistent', undefined, 'skip-error');
+    
+    console.log('Skip logic test completed\n');
+  }
+
+  private async resetRateLimits(): Promise<void> {
+    await this.makeRequest('POST', '/admin/reset-rate-limit', {
+      identifier: '127.0.0.1'
+    }, 'admin-reset');
   }
 
   private async makeRequest(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
     path: string,
-    data?: any
+    data?: any,
+    testType?: string
   ): Promise<void> {
     const startTime = Date.now();
     const url = `${this.baseUrl}${path}`;
@@ -214,7 +317,8 @@ export class RateLimitTestClient {
         method,
         url,
         data,
-        timeout: 5000,
+        timeout: 10000,
+        validateStatus: () => true
       });
       
       const responseTime = Date.now() - startTime;
@@ -227,10 +331,10 @@ export class RateLimitTestClient {
         rateLimitHeaders,
         responseTime,
         timestamp: new Date().toISOString(),
+        testType
       };
       
       this.results.push(result);
-      this.logResult(result);
       
     } catch (error) {
       const responseTime = Date.now() - startTime;
@@ -248,10 +352,68 @@ export class RateLimitTestClient {
         responseTime,
         timestamp: new Date().toISOString(),
         error: axiosError.message,
+        testType
       };
       
       this.results.push(result);
-      this.logResult(result);
+    }
+  }
+
+  private async makeRawRequest(
+    method: string,
+    path: string,
+    data?: string,
+    testType?: string,
+    headers?: Record<string, string>
+  ): Promise<void> {
+    const startTime = Date.now();
+    const url = `${this.baseUrl}${path}`;
+    
+    try {
+      const response = await axios({
+        method: method as any,
+        url,
+        data,
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers
+        },
+        timeout: 10000,
+        validateStatus: () => true
+      });
+      
+      const responseTime = Date.now() - startTime;
+      const rateLimitHeaders = this.extractRateLimitHeaders(response.headers);
+      
+      const result: TestResult = {
+        url: path,
+        method,
+        status: response.status,
+        rateLimitHeaders,
+        responseTime,
+        timestamp: new Date().toISOString(),
+        testType
+      };
+      
+      this.results.push(result);
+      
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      const axiosError = error as AxiosError;
+      
+      const result: TestResult = {
+        url: path,
+        method,
+        status: axiosError.response?.status || 0,
+        rateLimitHeaders: axiosError.response 
+          ? this.extractRateLimitHeaders(axiosError.response.headers) : {},
+        responseTime,
+        timestamp: new Date().toISOString(),
+        error: axiosError.message,
+        testType
+      };
+      
+      this.results.push(result);
     }
   }
 
@@ -296,6 +458,7 @@ export class RateLimitTestClient {
       'x-ratelimit-remaining': headers['x-ratelimit-remaining'],
       'x-ratelimit-reset': headers['x-ratelimit-reset'],
       'x-ratelimit-retryafter': headers['x-ratelimit-retryafter'],
+      'x-ratelimit-warning': headers['x-ratelimit-warning'],
       'ratelimit-limit': headers['ratelimit-limit'],
       'ratelimit-remaining': headers['ratelimit-remaining'],
       'ratelimit-reset': headers['ratelimit-reset'],
@@ -303,19 +466,9 @@ export class RateLimitTestClient {
     };
   }
 
-  private logResult(result: TestResult): void {
-    const remaining = result.rateLimitHeaders['x-ratelimit-remaining'] || 
-                     result.rateLimitHeaders['ratelimit-remaining'] || 'N/A';
-    
-    console.log(
-      `${result.method} ${result.url} - ${result.status} ` +
-      `(${result.responseTime}ms) - Remaining: ${remaining}`
-    );
-  }
-
   private printSummary(): void {
-    console.log('\nComprehensive Test Summary:');
-    console.log('=====================================');
+    console.log('\nTest Summary');
+    console.log('============');
     
     const totalRequests = this.results.length;
     const successfulRequests = this.results.filter(r => r.status === 200).length;
@@ -338,20 +491,21 @@ export class RateLimitTestClient {
     const testedEndpoints = [...new Set(this.results.map(r => r.url))];
     const testedMethods = [...new Set(this.results.map(r => r.method))];
     
-    console.log('\nCoverage Summary:');
-    console.log(`Endpoints Tested: ${testedEndpoints.length}`);
+    console.log('\nRate Limiting Validation:');
+    console.log(`Burst Protection: ${rateLimitedRequests > 0 ? 'TRIGGERED' : 'NOT TRIGGERED'}`);
+    console.log(`Auth Protection: ${authBlockedRequests > 0 ? 'TRIGGERED' : 'NOT TRIGGERED'}`);
+    console.log(`Headers: Legacy + Standard validated`);
+    
+    console.log('\nCoverage:');
+    console.log(`Endpoints: ${testedEndpoints.length}`);
     console.log(`HTTP Methods: ${testedMethods.join(', ')}`);
-    console.log(`Headers Validated: Legacy + Standard`);
-    console.log(`Security Tests: Auth limits, 404 handling`);
-    console.log(`Performance Tests: Concurrent requests`);
-    console.log(`Recovery Tests: Window reset validation`);
+    console.log(`Test Types: Basic, Burst, Auth, API, Global, Concurrent, Boundary, Recovery, Admin, Error, Security, Worker, Skip Logic`);
     
-    console.log('\nComprehensive Rate Limiter Testing Complete!');
-    
-    this.saveResultsToFile();
+    this.saveResults();
+    console.log('\nComprehensive rate limiter testing completed');
   }
 
-  private saveResultsToFile(): void {
+  private saveResults(): void {
     const fs = require('fs');
     const filename = `rate-limit-test-results-${Date.now()}.json`;
     
@@ -388,10 +542,9 @@ if (require.main === module) {
   
   (async () => {
     try {
-      console.log(`Testing comprehensive rate limiter at: ${baseUrl}\n`);
+      console.log(`Testing rate limiter at: ${baseUrl}\n`);
       const client = new RateLimitTestClient(baseUrl);
       await client.runTests();
-      console.log('\nAll tests completed successfully!');
     } catch (error) {
       console.error('Test execution failed:', error);
       process.exit(1);

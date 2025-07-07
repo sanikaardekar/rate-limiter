@@ -22,6 +22,18 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - [Testing](#testing)
 - [Assumptions & Limitations](#assumptions--limitations)
 
+## 🚀 Features
+
+- **Sliding Window Counter Algorithm**: More accurate rate limiting with smooth distribution
+- **Multiple Rate Limiting Rules**: Global, API-specific, authentication, and burst protection
+- **Redis Persistence**: Distributed rate limiting with Redis backend using sorted sets
+- **Queue-Based Processing**: Asynchronous job processing with Bull queues
+- **Flexible Configuration**: Path-specific rules with custom key generators
+- **Monitoring & Admin**: Real-time stats and administrative controls
+- **RFC Compliant**: Standard and legacy HTTP headers
+- **Security Features**: Header sanitization and key collision prevention
+- **Worker Integration**: Background job processing for optimal performance
+
 ## 🏃 Quick Start
 
 ### Prerequisites
@@ -29,7 +41,7 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - Node.js 16+
 - Redis server
 - TypeScript
-- npm or yarn package manager
+- npm package manager
 
 ### Dependencies
 
@@ -64,11 +76,14 @@ redis-server
 # Build the project
 npm run build
 
-# Start the development server
+# Start the development server (includes worker)
 npm run dev
 
-# Or start production server
+# Or start production server (includes worker)
 npm start
+
+# Start worker separately (if needed)
+node dist/workers/rate-limit-worker.js
 ```
 
 The server will start on `http://localhost:3000`
@@ -98,14 +113,15 @@ curl http://localhost:3000/admin/stats
        │
        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                Express.js Server                            │
+│                 ApiServer + RateLimitWorker                 │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │            Rate Limiter Middleware                 │    │
+│  │            RateLimiterMiddleware                    │    │
 │  │                                                     │    │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │    │
 │  │  │ Global  │  │   API   │  │  Auth   │  │ Burst   │ │    │
-│  │  │15min/1k │  │1min/100 │  │5min/5   │  │1sec/10  │ │    │
+│  │  │15min/1k │  │1min/300 │  │5min/5   │  │1sec/100 │ │    │
+│  │  │Sliding  │  │Sliding  │  │Sliding  │  │Sliding  │ │    │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │    │
 │  │       │           │           │           │         │    │
 │  │       └───────────┼───────────┼───────────┘         │    │
@@ -115,7 +131,18 @@ curl http://localhost:3000/admin/stats
 │  │              │    Rule Wins        │                │    │
 │  │              └────┬────────────────┘                │    │
 │  └───────────────────┼─────────────────────────────────┘    │
-└──────────────────────┼──────────────────────────────────────┘
+│                      │                                      │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              RateLimitWorker                       │    │
+│  │                                                     │    │
+│  │  ┌─────────────┐    ┌─────────────┐                │    │
+│  │  │ QueueService│    │ Background  │                │    │
+│  │  │             │    │ Processing  │                │    │
+│  │  │ • INCREMENT │    │ • CLEANUP   │                │    │
+│  │  │ • RESET     │    │ • REVERT    │                │    │
+│  │  └─────────────┘    └─────────────┘                │    │
+│  └─────────────────────────────────────────────────────┘    │
+└──────────────────────┬──────────────────────────────────────┘
                        │
             ┌──────────▼──────────┐
             │     Decision        │
@@ -131,17 +158,18 @@ curl http://localhost:3000/admin/stats
         ▼              │              ▼
 ┌──────────────┐       │      ┌──────────────┐
 │ Process      │       │      │ Return 429   │
-│ Request      │       │      │ or 423       │
-│ Normally     │       │      │ + Headers    │
+│ Request +    │       │      │ or 423       │
+│ Queue Jobs   │       │      │ + Headers    │
 └──────────────┘       │      └──────────────┘
         │              │              │
         └──────────────┼──────────────┘
                        │
                        ▼
               ┌─────────────────┐
-              │ Queue Async Job │
-              │ (Increment +    │
-              │  Cleanup)       │
+              │ Redis Backend   │
+              │ • Sorted Sets   │
+              │ • Sliding Window│
+              │ • TTL Cleanup   │
               └─────────────────┘
 ```
 
@@ -161,14 +189,17 @@ curl http://localhost:3000/admin/stats
 │  │ │ reset: 1234 │ │           │  │ ZADD key timestamp  │ │  │
 │  │ └─────────────┘ │           │  │ ZCOUNT key range    │ │  │
 │  │                 │           │  │ ZREMRANGEBYSCORE    │ │  │
-│  │ ┌─────────────┐ │           │  └─────────────────────┘ │  │
-│  │ │    Key2     │ │           │                         │  │
-│  │ │ count: 12   │ │           │  ┌─────────────────────┐ │  │
-│  │ │ reset: 5678 │ │  Fallback │  │ Fixed Window        │ │  │
-│  │ └─────────────┘ │◄─────────►│  │ (String + JSON)     │ │  │
-│  └─────────────────┘           │  │                     │ │  │
-│                                │  │ SET key data EX ttl │ │  │
-│                                │  │ GET key             │ │  │
+│  │ ┌─────────────┐ │           │  │ Security: Hashed    │ │  │
+│  │ │    Key2     │ │           │  │ Keys + Sanitized    │ │  │
+│  │ │ count: 12   │ │           │  │ Client IPs          │ │  │
+│  │ │ reset: 5678 │ │  Fallback │  └─────────────────────┘ │  │
+│  │ └─────────────┘ │◄─────────►│                         │  │
+│  └─────────────────┘           │  ┌─────────────────────┐ │  │
+│                                │  │ In-Memory Fallback  │ │  │
+│                                │  │ (When Redis Down)   │ │  │
+│                                │  │                     │ │  │
+│                                │  │ Local Map Storage   │ │  │
+│                                │  │ TTL-based Cleanup   │ │  │
 │                                │  └─────────────────────┘ │  │
 │                                └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
@@ -178,36 +209,41 @@ curl http://localhost:3000/admin/stats
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   API Request   │    │  Queue Service  │    │ Rate Limit      │
-│   Processing    │    │                 │    │ Worker          │
-│                 │    │                 │    │ (Optional)      │
+│   API Request   │    │  Queue Service  │    │ RateLimitWorker │
+│   Processing    │    │                 │    │ (Integrated)    │
+│                 │    │                 │    │                 │
 └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
           │                      │                      │
-          │ 1. Create Job        │                      │
+          │ 1. Rate Limit Check  │                      │
+          │    (Synchronous)     │                      │
+          │                      │                      │
+          │ 2. Queue Cleanup Job │                      │
           ├─────────────────────►│                      │
           │                      │                      │
-          │ 2. Return Response   │                      │
+          │ 3. Return Response   │                      │
           │    Immediately       │                      │
           │◄─────────────────────┤                      │
           │                      │                      │
-          │                      │ 3. Process Job       │
-          │                      │     Async            │
+          │                      │ 4. Process Jobs      │
+          │                      │    Background        │
           │                      ├─────────────────────►│
           │                      │                      │
-          │                      │                      │ 4. Update Redis
-          │                      │                      │    Counters
-          │                      │                      │
-          │                      │ 5. Job Complete      │
+          │                      │                      │ 5. Redis Operations
+          │                      │                      │    • Cleanup expired
+          │                      │                      │    • Revert counters
+          │                      │                      │    • Reset limits
+          │                      │ 6. Job Complete      │
           │                      │◄─────────────────────┤
           │                      │                      │
 
 ┌─────────────────────────────────────────────────────────────┐
 │                    Job Types                                │
 │                                                             │
-│  INCREMENT Job:                 CLEANUP Job:                │
-│  • Update request count         • Remove expired entries   │
-│  • Add timestamp to ZSET        • Clean up old data        │
-│  • Set TTL                      • Optimize memory usage     │
+│  CLEANUP Job:                   RESET Job:                  │
+│  • Remove expired entries       • Delete rate limit keys   │
+│  • Clean up old ZSET data       • Clear local cache        │
+│  • Optimize Redis memory        • Revert increments        │
+│  • Periodic maintenance         • Admin reset operations   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -219,9 +255,10 @@ curl http://localhost:3000/admin/stats
 4. **Sliding window check** → Redis sorted sets track request timestamps
 5. **Expired requests removed** → Cleanup old entries outside window
 6. **Current count calculated** → Count requests in sliding window
-7. **Decision made** → Allow/block request based on limits
-8. **Response sent** → With appropriate headers and status
-9. **Queue job** → Async increment/cleanup operations (background)
+7. **Graduated response** → Add warning headers if approaching limits
+8. **Decision made** → Allow/block request based on limits
+9. **Response sent** → With appropriate headers and status
+10. **Queue job** → Async increment/cleanup operations (background)
 
 ### Algorithm Comparison
 
@@ -238,10 +275,10 @@ Problem: 20 requests possible at boundary (59s + 60s)
 
 Sliding Window (Primary):
 ┌─────────────────────────────────────────┐
-│        60-second sliding window         │
+│        1-second sliding window          │
 │  ┌─────────────────────────────────┐    │
 │  │     Current window (any time)   │    │
-│  │         Max 10 requests         │    │
+│  │        Max 100 requests        │    │
 │  └─────────────────────────────────┘    │
 └─────────────────────────────────────────┘
 Benefit: Smooth rate limiting, no boundary bursts
@@ -254,7 +291,8 @@ Benefit: Smooth rate limiting, no boundary bursts
 - **`CacheService`**: Dual-layer caching (Redis + in-memory)
 - **`RedisService`**: Sliding window counter with Redis sorted sets
 - **`QueueService`**: Async processing for increments and cleanup
-- **`HeadersUtil`**: RFC-compliant rate limit headers
+- **`RateLimitWorker`**: Background job processing worker
+- **`HeadersUtil`**: RFC-compliant rate limit headers with security sanitization
 
 ## 📊 Rate Limiting Rules
 
@@ -266,7 +304,7 @@ The system implements four distinct rate limiting rules:
 - **Purpose**: Prevent abuse and ensure fair usage
 
 ### 2. API Rate Limit
-- **Limit**: 100 requests per minute
+- **Limit**: 300 requests per minute (5 req/sec sustained)
 - **Scope**: `/api/*` endpoints
 - **Key**: `${req.ip}--${req.path}` (separate counters per endpoint)
 - **Bypass**: `/health` endpoint excluded
@@ -278,9 +316,9 @@ The system implements four distinct rate limiting rules:
 - **Status Code**: 423 (Locked)
 
 ### 4. Burst Protection
-- **Limit**: 10 requests per second
+- **Limit**: 100 requests per second
 - **Scope**: All endpoints except `/health`
-- **Purpose**: Prevent rapid-fire attacks
+- **Purpose**: Allow legitimate bursts while preventing DDoS
 
 ### Rule Priority
 
@@ -317,11 +355,11 @@ Rules are evaluated simultaneously, and the **most restrictive** (first blocked 
 ```bash
 curl -X POST http://localhost:3000/admin/reset-rate-limit \
   -H "Content-Type: application/json" \
-  -d '{"identifier":"127.0.0.1","ruleId":"api"}'
+  -d '{"identifier":"::1","ruleId":"api"}'
 ```
 
 Parameters:
-- `identifier`: IP address or custom identifier
+- `identifier`: IP address or custom identifier (use `::1` for localhost)
 - `ruleId`: Specific rule to reset (optional, defaults to all)
 
 ## 📈 Monitoring
@@ -336,11 +374,18 @@ X-RateLimit-Limit: 100
 X-RateLimit-Remaining: 95
 X-RateLimit-Reset: 1640995200
 X-RateLimit-RetryAfter: 60
+X-RateLimit-Warning: Approaching rate limit
 RateLimit-Limit: 100
 RateLimit-Remaining: 95
 RateLimit-Reset: 1640995200
 Retry-After: 60
 ```
+
+**Graduated Response System:**
+- **Normal**: No warning headers
+- **20% remaining**: `X-RateLimit-Warning: Approaching rate limit`
+- **10% remaining**: `X-RateLimit-Warning: Rate limit nearly exceeded`
+- **0% remaining**: HTTP 429/423 with block
 
 ### Statistics Endpoint
 
@@ -376,52 +421,81 @@ Response:
 
 ### Rate Limiting Algorithm
 
-The system uses **Sliding Window Counter** algorithm:
+The system uses **Sliding Window Counter** algorithm for all rules:
 - More accurate than fixed windows
 - Prevents burst at window boundaries
 - Uses Redis sorted sets for timestamp tracking
-- Falls back to fixed window if needed
+- Consistent algorithm across all rate limiting rules
 
 ### Manual Testing
 
+#### Quick Rate Limiter Tests
 ```bash
-# Reset rate limits before testing
-curl -X POST http://localhost:3000/admin/reset-rate-limit \
-  -H "Content-Type: application/json" \
-  -d '{"identifier":"127.0.0.1"}'
+# Run all rate limiter tests
+node tests/run-all-tests.js
 
-# Test burst protection (should block after 10 requests)
-for i in {1..15}; do curl http://localhost:3000/api/data; echo; done
-
-# Test auth rate limiting (should block after 5 requests)
-for i in {1..6}; do curl -X POST http://localhost:3000/auth/login; echo; done
-
-# Test health endpoint bypass (should never block)
-for i in {1..20}; do curl http://localhost:3000/health; echo; done
+# Or run individual tests
+node tests/test-burst.js
+node tests/test-api-limit.js
+node tests/test-global-limit.js
+node tests/test-warning-headers.js
 ```
 
-### Comprehensive Test Client
+#### Individual Manual Tests
+```bash
+# Test auth rate limiting (should block after 5 requests)
+for i in {1..6}; do curl -X POST http://localhost:3000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"test"}'; echo; done
 
-Use the built-in test client for thorough testing:
+# Test health endpoint bypass (should never block)
+for i in {1..200}; do curl http://localhost:3000/health; echo; done
+
+# Test admin reset functionality
+curl -X POST http://localhost:3000/admin/reset-rate-limit \
+  -H "Content-Type: application/json" \
+  -d '{"identifier":"::1"}'
+
+# Test different HTTP methods
+curl -X POST http://localhost:3000/api/data \
+  -H "Content-Type: application/json" \
+  -d '{"test":"data"}'
+
+curl -X PUT http://localhost:3000/api/data/123 \
+  -H "Content-Type: application/json" \
+  -d '{"test":"updated"}'
+
+curl -X DELETE http://localhost:3000/api/data/123
+```
+
+### Test Client
+
+Use the built-in test client for comprehensive testing:
 
 ```bash
-# Build the project first (required)
+# Build the project first
 npm run build
 
-# Run comprehensive test suite against default server (localhost:3000)
+# Run test suite against default server (localhost:3000)
 node dist/client/test-client.js
 
 # Test against different server
 node dist/client/test-client.js http://localhost:3001
+
+# Or run via npm
+npm run test:client
 ```
 
-**Test Client Features:**
-- Tests all endpoints and HTTP methods
-- Validates rate limit headers (legacy + standard)
-- Tests burst protection, auth limits, and recovery
-- Generates detailed JSON reports
-- Measures response times and coverage
-- Concurrent request testing
+**Test Coverage:**
+- All endpoints and HTTP methods
+- Rate limit headers validation (legacy + standard)
+- Burst protection, auth limits, and recovery
+- Boundary conditions and security scenarios
+- Header injection vulnerability testing
+- Queue worker functionality validation
+- Skip logic for successful/failed requests
+- Concurrent request handling
+- Detailed JSON reports with metrics
 
 ## ⚠️ Assumptions & Limitations
 
@@ -449,6 +523,7 @@ node dist/client/test-client.js http://localhost:3001
 3. **Redis Failover**: No automatic Redis failover handling
 4. **Lua Script Errors**: Falls back to fixed window algorithm
 5. **Sorted Set Growth**: Redis memory usage grows with request volume (cleaned by TTL)
+6. **TTL Precision**: Redis TTL calculations can be off by seconds due to rounding
 
 ### Monitoring & Alerting
 
@@ -470,4 +545,6 @@ node dist/client/test-client.js http://localhost:3001
 2. **Rate Limit Bypass**: Implement IP whitelisting for trusted sources
 3. **DDoS Protection**: Consider upstream rate limiting (CDN/Load Balancer)
 4. **Input Validation**: Validate all admin endpoint inputs
+5. **Header Sanitization**: Client IP extraction sanitizes malicious headers
+6. **Key Security**: Rate limit keys use hashing to prevent collisions
 
