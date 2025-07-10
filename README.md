@@ -52,7 +52,6 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - `cors` - Cross-origin resource sharing
 - `helmet` - Security headers
 - `axios` - HTTP client (for testing)
-- `dotenv` - Environment variables
 
 **Development Dependencies:**
 - `typescript` - TypeScript compiler
@@ -81,9 +80,6 @@ npm run dev
 
 # Or start production server (includes worker)
 npm start
-
-# Start worker separately (if needed)
-node dist/workers/rate-limit-worker.js
 ```
 
 The server will start on `http://localhost:3000`
