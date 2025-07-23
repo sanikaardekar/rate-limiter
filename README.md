@@ -1,16 +1,21 @@
 # Rate Limiter API Server
 
-A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.js. Features multiple rate limiting strategies, queue-based processing, and comprehensive monitoring capabilities.
+A rate limiting system built with Node.js, TypeScript, and Express.js. Implements sliding window counter algorithms with Redis sorted sets for precise traffic control, dual-layer caching with in-memory fallback, asynchronous queue-based processing for optimal system performance, and real-time monitoring with RFC-compliant headers and administrative dashboards.
 
 ## 🚀 Features
 
-- **Sliding Window Counter Algorithm**: More accurate rate limiting with smooth distribution
-- **Multiple Rate Limiting Rules**: Global, API-specific, authentication, and burst protection
-- **Redis Persistence**: Distributed rate limiting with Redis backend using sorted sets
-- **Queue-Based Processing**: Asynchronous job processing with Bull queues
-- **Flexible Configuration**: Path-specific rules with custom key generators
-- **Monitoring & Admin**: Real-time stats and administrative controls
-- **RFC Compliant**: Standard and legacy HTTP headers
+- **Sliding Window Counter Algorithm**: Precise rate limiting with smooth distribution across time windows
+- **Multiple Rate Limiting Rules**: Configurable global, API-specific, authentication, and burst protection rules
+- **Redis Persistence**: Distributed rate limiting with Redis sorted sets for accurate tracking
+- **Resilient Architecture**: In-memory fallback when Redis is unavailable
+- **Queue-Based Processing**: Asynchronous job processing with Bull queues for optimal performance
+- **Flexible Configuration**: Path-specific rules with custom key generators and skip conditions
+- **Graduated Response System**: Warning headers when approaching limits
+- **Monitoring & Admin**: Real-time statistics and administrative controls
+- **RFC-Compliant Headers**: Both standard and legacy HTTP rate limit headers
+- **Security Features**: Header sanitization, key collision prevention, and protection against injection
+- **Local Throttling**: Optional request throttling for smoother traffic distribution
+- **Skip Logic**: Configurable options to exclude successful or failed requests from rate limits
 
 ## 📋 Table of Contents
 
@@ -21,18 +26,6 @@ A Redis-backed rate limiting system built with Node.js, TypeScript, and Express.
 - [Monitoring](#monitoring)
 - [Testing](#testing)
 - [Assumptions & Limitations](#assumptions--limitations)
-
-## 🚀 Features
-
-- **Sliding Window Counter Algorithm**: More accurate rate limiting with smooth distribution
-- **Multiple Rate Limiting Rules**: Global, API-specific, authentication, and burst protection
-- **Redis Persistence**: Distributed rate limiting with Redis backend using sorted sets
-- **Queue-Based Processing**: Asynchronous job processing with Bull queues
-- **Flexible Configuration**: Path-specific rules with custom key generators
-- **Monitoring & Admin**: Real-time stats and administrative controls
-- **RFC Compliant**: Standard and legacy HTTP headers
-- **Security Features**: Header sanitization and key collision prevention
-- **Worker Integration**: Background job processing for optimal performance
 
 ## 🏃 Quick Start
 
@@ -203,6 +196,8 @@ curl http://localhost:3000/admin/stats
 
 ### Queue Processing Flow
 
+The system uses two separate queues (`rateLimitQueue` and `cleanupQueue`) for different operations:
+
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   API Request   │    │  Queue Service  │    │ RateLimitWorker │
@@ -335,7 +330,6 @@ Rules are evaluated simultaneously, and the **most restrictive** (first blocked 
 | `POST` | `/auth/login` | Authentication | ✅ (Strict) |
 | `POST` | `/auth/register` | Registration | ✅ (Strict) |
 | `POST` | `/auth/forgot-password` | Password reset | ✅ (Strict) |
-| `GET` | `/test/unlimited` | Test endpoint (global limits apply) | ✅ |
 | `GET` | `/test/limited` | Rate limited test | ✅ |
 
 ### Admin Endpoints
@@ -374,8 +368,11 @@ X-RateLimit-Warning: Approaching rate limit
 RateLimit-Limit: 100
 RateLimit-Remaining: 95
 RateLimit-Reset: 1640995200
+RateLimit-Policy: 100;w=60  # 100 requests per 60-second window
 Retry-After: 60
 ```
+
+The `RateLimit-Policy` header follows the RFC standard format and provides information about the rate limit policy: `[limit];w=[window in seconds]`. In this example, it indicates a limit of 100 requests per 60-second window.
 
 **Graduated Response System:**
 - **Normal**: No warning headers
@@ -400,6 +397,12 @@ Response:
         "active": 1,
         "completed": 150,
         "failed": 0
+      },
+      "cleanupQueue": {
+        "waiting": 0,
+        "active": 0,
+        "completed": 24,
+        "failed": 0
       }
     },
     "localCacheSize": 25
@@ -412,6 +415,8 @@ Response:
   }
 }
 ```
+
+The statistics endpoint provides comprehensive information about both queues (`rateLimitQueue` and `cleanupQueue`), allowing for complete monitoring of the system's operation.
 
 ## 🧪 Testing
 
@@ -507,7 +512,7 @@ npm run test:client
 ### Limitations
 
 1. **Clock Synchronization**: Requires synchronized clocks across multiple servers
-2. **Redis Dependency**: System fails open if Redis is unavailable
+2. **Redis Dependency**: System fails open if Redis is unavailable (mitigated by in-memory fallback)
 3. **Memory Usage**: Local cache grows with unique client identifiers
 4. **Precision**: 1-second minimum window resolution
 5. **Distributed Coordination**: No coordination between multiple server instances
@@ -521,12 +526,31 @@ npm run test:client
 5. **Sorted Set Growth**: Redis memory usage grows with request volume (cleaned by TTL)
 6. **TTL Precision**: Redis TTL calculations can be off by seconds due to rounding
 
+### Skip Logic for Request Handling
+
+The system includes configurable options to exclude successful or failed requests from rate limits:
+
+- `skipSuccessfulRequests`: When enabled, successful requests (2xx status codes) don't count against limits
+- `skipFailedRequests`: When enabled, failed requests (4xx/5xx status codes) don't count against limits
+
+This provides flexibility for different use cases, such as only counting failed authentication attempts.
+
+### Local Throttling
+
+The implementation includes a local throttling mechanism that helps smooth traffic distribution:
+
+- Uses a `throttleMap` to track request timing per client
+- Calculates minimum intervals between requests based on burst rule
+- Applies small delays to maintain consistent request spacing
+- Automatically cleans up stale entries to prevent memory growth
+
 ### Monitoring & Alerting
 
 - Monitor Redis memory usage
 - Set up alerts for high error rates
 - Track queue processing delays
 - Monitor response times
+- Use the comprehensive queue statistics to identify bottlenecks
 
 ### Scaling Considerations
 
@@ -543,4 +567,3 @@ npm run test:client
 4. **Input Validation**: Validate all admin endpoint inputs
 5. **Header Sanitization**: Client IP extraction sanitizes malicious headers
 6. **Key Security**: Rate limit keys use hashing to prevent collisions
-
