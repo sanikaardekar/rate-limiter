@@ -140,12 +140,6 @@ export class ApiServer {
     this.app.post('/admin/reset-rate-limit', this.resetRateLimitRoute());
     this.app.get('/admin/queue-stats', this.getQueueStatsRoute());
 
-    this.app.get('/test/unlimited', (req: Request, res: Response) => {
-      res.json({
-        message: 'This endpoint has no rate limiting',
-        timestamp: new Date().toISOString(),
-      });
-    });
 
     this.app.get('/test/limited', (req: Request, res: Response) => {
       res.json({

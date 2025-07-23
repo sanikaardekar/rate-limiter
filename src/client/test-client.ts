@@ -58,7 +58,6 @@ export class RateLimitTestClient {
     
     await this.makeRequest('GET', '/', undefined, 'basic');
     await this.makeRequest('GET', '/health', undefined, 'basic');
-    await this.makeRequest('GET', '/test/unlimited', undefined, 'basic');
     await this.makeRequest('GET', '/test/limited', undefined, 'basic');
     
     console.log('Basic endpoints test completed\n');

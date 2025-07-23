@@ -4,7 +4,7 @@ async function testGlobalRateLimit() {
   console.log('Testing global rate limiting (1000 req/15min)...');
   console.log('Note: This test sends 200 requests to different endpoints');
   
-  const endpoints = ['/', '/api/data', '/test/limited', '/test/unlimited'];
+  const endpoints = ['/', '/api/data', '/test/limited'];
   const promises = [];
   
   for (let i = 0; i < 200; i++) {
