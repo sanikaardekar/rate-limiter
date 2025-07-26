@@ -54,7 +54,7 @@ export class ApiServer {
         windowMs: 60 * 1000, 
         maxRequests: 300, 
         keyGenerator: (req) => `${req.ip}--${req.path}`,
-        skipIf: (req) => req.path.startsWith('/health'),
+        skipIf: (req) => req.path === '/health' || req.path.startsWith('/health'),
         algorithm: 'sliding', 
       },
       {
@@ -71,7 +71,7 @@ export class ApiServer {
         windowMs: 1000, 
         maxRequests: 50, 
         message: 'Request rate too high, please slow down',
-        skipIf: (req) => req.path.startsWith('/health'),
+        skipIf: (req) => req.path === '/health' || req.path.startsWith('/health'),
         algorithm: 'sliding',
       },
     ];

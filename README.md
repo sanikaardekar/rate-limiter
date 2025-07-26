@@ -21,6 +21,13 @@ A rate limiting system built with Node.js, TypeScript, and Express.js. Implement
 
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
+  - [System Architecture Diagram](#system-architecture-diagram)
+  - [Core Concepts](#core-concepts)
+  - [System Flow](#system-flow)
+  - [Caching Strategy](#caching-strategy)
+  - [Background Processing](#background-processing)
+  - [Algorithm Deep Dive](#algorithm-deep-dive)
+  - [Security & Resilience](#security--resilience)
 - [Rate Limiting Rules](#rate-limiting-rules)
 - [API Endpoints](#api-endpoints)
 - [Monitoring](#monitoring)
@@ -92,198 +99,194 @@ curl http://localhost:3000/admin/stats
 
 ## 🏗️ Architecture
 
-### System Architecture
+### System Architecture Diagram
 
 ```
-┌─────────────┐
-│   Client    │
-│  Request    │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 ApiServer + RateLimitWorker                 │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │            RateLimiterMiddleware                    │    │
-│  │                                                     │    │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │    │
-│  │  │ Global  │  │   API   │  │  Auth   │  │ Burst   │ │    │
-│  │  │15min/1k │  │1min/300 │  │5min/5   │  │1sec/50  │ │    │
-│  │  │Sliding  │  │Sliding  │  │Sliding  │  │Sliding  │ │    │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │    │
-│  │       │           │           │           │         │    │
-│  │       └───────────┼───────────┼───────────┘         │    │
-│  │                   │           │                     │    │
-│  │              ┌────▼───────────▼────┐                │    │
-│  │              │  Most Restrictive   │                │    │
-│  │              │    Rule Wins        │                │    │
-│  │              └────┬────────────────┘                │    │
-│  └───────────────────┼─────────────────────────────────┘    │
-│                      │                                      │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              RateLimitWorker                       │    │
-│  │                                                     │    │
-│  │  ┌─────────────┐    ┌─────────────┐                │    │
-│  │  │ QueueService│    │ Background  │                │    │
-│  │  │             │    │ Processing  │                │    │
-│  │  │ • INCREMENT │    │ • CLEANUP   │                │    │
-│  │  │ • RESET     │    │ • REVERT    │                │    │
-│  │  └─────────────┘    └─────────────┘                │    │
-│  └─────────────────────────────────────────────────────┘    │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-            ┌──────────▼──────────┐
-            │     Decision        │
-            └──────────┬──────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        │              │              │
-        ▼              │              ▼
-  ┌──────────┐         │        ┌──────────┐
-  │  ALLOW   │         │        │  BLOCK   │
-  └─────┬────┘         │        └─────┬────┘
-        │              │              │
-        ▼              │              ▼
-┌──────────────┐       │      ┌──────────────┐
-│ Process      │       │      │ Return 429   │
-│ Request +    │       │      │ or 423       │
-│ Queue Jobs   │       │      │ + Headers    │
-└──────────────┘       │      └──────────────┘
-        │              │              │
-        └──────────────┼──────────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │ Redis Backend   │
-              │ • Sorted Sets   │
-              │ • Sliding Window│
-              │ • TTL Cleanup   │
-              └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              RATE LIMITER SYSTEM                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────┐    ┌──────────────────────────────────────────────────────────┐
+│   CLIENT    │───▶│                    EXPRESS SERVER                        │
+│  (Browser/  │    │                                                          │
+│   API Tool) │    │  ┌─────────────────────────────────────────────────────┐ │
+└─────────────┘    │  │              RATE LIMIT MIDDLEWARE                 │ │
+                   │  │                                                     │ │
+                   │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │ │
+                   │  │  │   GLOBAL    │  │     API     │  │    AUTH     │ │ │
+                   │  │  │ 1000/15min  │  │  300/1min   │  │   5/5min    │ │ │
+                   │  │  └─────────────┘  └─────────────┘  └─────────────┘ │ │
+                   │  │  ┌─────────────┐                                   │ │
+                   │  │  │   BURST     │  ◄── RULE EVALUATION ──────────── │ │
+                   │  │  │   50/1sec   │      (Most Restrictive Wins)     │ │
+                   │  │  └─────────────┘                                   │ │
+                   │  └─────────────────────────────────────────────────────┘ │
+                   │                           │                              │
+                   │                           ▼                              │
+                   │  ┌─────────────────────────────────────────────────────┐ │
+                   │  │                CACHE LAYER                         │ │
+                   │  │                                                     │ │
+                   │  │  ┌─────────────┐              ┌─────────────────┐  │ │
+                   │  │  │   MEMORY    │◄─────────────┤  CIRCUIT BREAKER │  │ │
+                   │  │  │   CACHE     │   FALLBACK   │   (5 failures)  │  │ │
+                   │  │  │ (Fixed Win) │              └─────────────────┘  │ │
+                   │  │  └─────────────┘                       │           │ │
+                   │  │         ▲                              ▼           │ │
+                   │  │         │                    ┌─────────────────┐  │ │
+                   │  │         │                    │     REDIS       │  │ │
+                   │  │         │                    │  (Primary Store) │  │ │
+                   │  │         │                    │                 │  │ │
+                   │  │         │                    │ ┌─────────────┐ │  │ │
+                   │  │         │                    │ │ SORTED SETS │ │  │ │
+                   │  │         │                    │ │ Timestamps  │ │  │ │
+                   │  │         │                    │ │ Sliding Win │ │  │ │
+                   │  │         │                    │ └─────────────┘ │  │ │
+                   │  │         │                    └─────────────────┘  │ │
+                   │  └─────────────────────────────────────────────────────┘ │
+                   │                           │                              │
+                   │                           ▼                              │
+                   │  ┌─────────────────────────────────────────────────────┐ │
+                   │  │              DECISION ENGINE                        │ │
+                   │  │                                                     │ │
+                   │  │     ALLOW ◄──── COUNT ◄──── SLIDING WINDOW         │ │
+                   │  │       │           │           CALCULATION           │ │
+                   │  │       ▼           ▼                                 │ │
+                   │  │   RESPONSE    BLOCK (429/423)                      │ │
+                   │  │   + HEADERS   + RETRY-AFTER                        │ │
+                   │  └─────────────────────────────────────────────────────┘ │
+                   └──────────────────────────────────────────────────────────┘
+                                           │
+                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           BACKGROUND PROCESSING                                │
+│                                                                                 │
+│  ┌─────────────────┐                           ┌─────────────────────────────┐ │
+│  │ RATE LIMIT QUEUE│                           │      CLEANUP QUEUE          │ │
+│  │                 │                           │                             │ │
+│  │ • Increments    │                           │ • Expired Entry Removal    │ │
+│  │ • Resets        │                           │ • Memory Optimization      │ │
+│  │ • Reverts       │                           │ • Periodic Maintenance     │ │
+│  └─────────────────┘                           └─────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              RESPONSE HEADERS                                  │
+│                                                                                 │
+│  X-RateLimit-Limit: 100        │  RateLimit-Limit: 100                        │
+│  X-RateLimit-Remaining: 95     │  RateLimit-Remaining: 95                     │
+│  X-RateLimit-Reset: 1640995200 │  RateLimit-Reset: 1640995200                 │
+│  X-RateLimit-Warning: ...      │  RateLimit-Policy: 100;w=60                  │
+│                                │  Retry-After: 60                             │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Cache Service Architecture
+### Core Concepts
+
+**Rate Limiting Fundamentals:**
+- **Purpose**: Control request frequency to prevent abuse and ensure fair resource usage
+- **Sliding Window**: More accurate than fixed windows, prevents boundary bursts
+- **Multiple Rules**: Different limits for different endpoints (global, API, auth, burst)
+- **Graduated Response**: Warning headers before blocking, then HTTP 429/423
+
+**Key Design Decisions:**
+- **Redis Sorted Sets**: Store request timestamps for precise sliding window calculations
+- **Dual-Layer Caching**: Redis primary + in-memory fallback for resilience
+- **Asynchronous Processing**: Rate checks are fast, cleanup happens in background
+- **Circuit Breaker**: Automatic fallback when Redis fails
+
+### System Flow
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Cache Service                            │
-│                                                             │
-│  ┌─────────────────┐           ┌─────────────────────────┐  │
-│  │  Local Cache    │           │     Redis Service       │  │
-│  │  (In-Memory)    │           │                         │  │
-│  │                 │           │  ┌─────────────────────┐ │  │
-│  │ ┌─────────────┐ │    Fast   │  │ Sliding Window      │ │  │
-│  │ │    Key1     │ │◄─────────►│  │ (Sorted Sets)       │ │  │
-│  │ │ count: 5    │ │   Lookup  │  │                     │ │  │
-│  │ │ reset: 1234 │ │           │  │ ZADD key timestamp  │ │  │
-│  │ └─────────────┘ │           │  │ ZCOUNT key range    │ │  │
-│  │                 │           │  │ ZREMRANGEBYSCORE    │ │  │
-│  │ ┌─────────────┐ │           │  │ Security: Hashed    │ │  │
-│  │ │    Key2     │ │           │  │ Keys + Sanitized    │ │  │
-│  │ │ count: 12   │ │           │  │ Client IPs          │ │  │
-│  │ │ reset: 5678 │ │  Fallback │  └─────────────────────┘ │  │
-│  │ └─────────────┘ │◄─────────►│                         │  │
-│  └─────────────────┘           │  ┌─────────────────────┐ │  │
-│                                │  │ In-Memory Fallback  │ │  │
-│                                │  │ (When Redis Down)   │ │  │
-│                                │  │                     │ │  │
-│                                │  │ Local Map Storage   │ │  │
-│                                │  │ TTL-based Cleanup   │ │  │
-│                                │  └─────────────────────┘ │  │
-│                                └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+Request → Middleware → Cache Check → Redis Window → Decision → Response
+    ↓         ↓           ↓            ↓          ↓         ↓
+  Client   Multiple    Local +      Sorted     Allow/    Headers +
+           Rules       Redis        Sets       Block     Status
+                                      ↓
+                               Background Queue
+                               (Cleanup/Reset)
 ```
 
-### Queue Processing Flow
+**Step-by-Step Process:**
+1. **Request arrives** at Express middleware
+2. **Rule evaluation** checks all applicable limits simultaneously  
+3. **Cache lookup** checks local cache first, then Redis
+4. **Sliding window** counts requests in time window using sorted sets
+5. **Cleanup** removes expired entries outside window
+6. **Decision** allows or blocks based on most restrictive rule
+7. **Response** includes RFC-compliant headers
+8. **Background jobs** handle async cleanup and resets
 
-The system uses two separate queues (`rateLimitQueue` and `cleanupQueue`) for different operations:
+### Caching Strategy
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   API Request   │    │  Queue Service  │    │ RateLimitWorker │
-│   Processing    │    │                 │    │ (Integrated)    │
-│                 │    │                 │    │                 │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          │ 1. Rate Limit Check  │                      │
-          │    (Synchronous)     │                      │
-          │                      │                      │
-          │ 2. Queue Cleanup Job │                      │
-          ├─────────────────────►│                      │
-          │                      │                      │
-          │ 3. Return Response   │                      │
-          │    Immediately       │                      │
-          │◄─────────────────────┤                      │
-          │                      │                      │
-          │                      │ 4. Process Jobs      │
-          │                      │    Background        │
-          │                      ├─────────────────────►│
-          │                      │                      │
-          │                      │                      │ 5. Redis Operations
-          │                      │                      │    • Cleanup expired
-          │                      │                      │    • Revert counters
-          │                      │                      │    • Reset limits
-          │                      │ 6. Job Complete      │
-          │                      │◄─────────────────────┤
-          │                      │                      │
+**Two-Layer Design:**
+- **Layer 1 (Redis)**: Distributed, persistent, sliding window with sorted sets
+- **Layer 2 (Memory)**: Local fallback when Redis unavailable, fixed window
 
-┌─────────────────────────────────────────────────────────────┐
-│                    Job Types                                │
-│                                                             │
-│  CLEANUP Job:                   RESET Job:                  │
-│  • Remove expired entries       • Delete rate limit keys   │
-│  • Clean up old ZSET data       • Clear local cache        │
-│  • Optimize Redis memory        • Revert increments        │
-│  • Periodic maintenance         • Admin reset operations   │
-└─────────────────────────────────────────────────────────────┘
+**Redis Operations:**
+```bash
+# Add request timestamp
+ZADD rate_limit:key timestamp request_id
+
+# Count requests in window  
+ZCOUNT rate_limit:key (now-window) +inf
+
+# Remove expired entries
+ZREMRANGEBYSCORE rate_limit:key -inf (now-window)
 ```
 
-### Data Flow Summary
+**Fallback Behavior:**
+- **Circuit Breaker**: Detects Redis failures (5 consecutive failures)
+- **Automatic Fallback**: Switches to in-memory cache
+- **Recovery**: Gradually returns to Redis when healthy
 
-1. **Request arrives** → Express.js server
-2. **Rate limiter middleware** → Checks all applicable rules
-3. **Cache service** → Checks local cache first, then Redis
-4. **Sliding window check** → Redis sorted sets track request timestamps
-5. **Expired requests removed** → Cleanup old entries outside window
-6. **Current count calculated** → Count requests in sliding window
-7. **Graduated response** → Add warning headers if approaching limits
-8. **Decision made** → Allow/block request based on limits
-9. **Response sent** → With appropriate headers and status
-10. **Queue job** → Async increment/cleanup operations (background)
+### Background Processing
 
-### Algorithm Comparison
+**Why Async Processing?**
+- **Fast Response**: Rate checks return immediately, cleanup happens later
+- **Memory Optimization**: Removes expired Redis entries to prevent memory bloat
+- **Error Recovery**: Handles failed operations without blocking requests
 
+**Queue Types:**
+- **Rate Limit Queue**: Handles increments, resets, and reverts
+- **Cleanup Queue**: Periodic maintenance and expired entry removal
+
+### Algorithm Deep Dive
+
+**Sliding Window vs Fixed Window:**
+
+*Fixed Window Problem:*
 ```
-Fixed Window vs Sliding Window:
-
-Fixed Window (Fallback):
-┌─────────┬─────────┬─────────┬─────────┐
-│ Window1 │ Window2 │ Window3 │ Window4 │
-│ 0-59s   │ 60-119s │120-179s │180-239s │
-│ 10 req  │ 10 req  │ 10 req  │ 10 req  │
-└─────────┴─────────┴─────────┴─────────┘
-Problem: 20 requests possible at boundary (59s + 60s)
-
-Sliding Window (Primary):
-┌─────────────────────────────────────────┐
-│        1-second sliding window          │
-│  ┌─────────────────────────────────┐    │
-│  │     Current window (any time)   │    │
-│  │        Max 50 requests         │    │
-│  └─────────────────────────────────┘    │
-└─────────────────────────────────────────┘
-Benefit: Smooth rate limiting, no boundary bursts
+Window 1: [0-60s] = 100 requests
+Window 2: [60-120s] = 100 requests
+Problem: 200 requests possible at 59-61s boundary
 ```
 
-### Key Components
+*Sliding Window Solution:*
+```
+Any 60s period = Max 100 requests
+At time T: Count requests from (T-60s) to T
+Result: Smooth distribution, no boundary bursts
+```
 
-- **`ApiServer`**: Express.js server with rate limiting middleware
-- **`RateLimiterMiddleware`**: Evaluates multiple rules simultaneously
-- **`CacheService`**: Dual-layer caching (Redis + in-memory)
-- **`RedisService`**: Sliding window counter with Redis sorted sets
-- **`QueueService`**: Async processing for increments and cleanup
-- **`RateLimitWorker`**: Background job processing worker
-- **`HeadersUtil`**: RFC-compliant rate limit headers with security sanitization
+### Security & Resilience
+
+**Security Measures:**
+- **IP Sanitization**: Validates and cleans client IP addresses
+- **Key Hashing**: Prevents Redis key collision attacks  
+- **Header Injection Protection**: Sanitizes malicious headers
+- **Input Validation**: Validates all admin endpoint parameters
+
+**Resilience Features:**
+- **Circuit Breaker**: 5 failure threshold, 30s recovery timeout
+- **Graceful Degradation**: Falls back to in-memory cache
+- **Error Handling**: Comprehensive try-catch with fallbacks
+- **Memory Management**: TTL cleanup prevents memory leaks
+
+**Performance Optimizations:**
+- **Short-Circuit Evaluation**: Stops at first blocking rule
+- **Lua Scripts**: Atomic Redis operations prevent race conditions
+- **Connection Pooling**: Efficient Redis connection management
+- **Local Caching**: Reduces Redis load for frequent checks
 
 ## 📊 Rate Limiting Rules
 
@@ -420,150 +423,23 @@ The statistics endpoint provides comprehensive information about both queues (`r
 
 ## 🧪 Testing
 
-### Rate Limiting Algorithm
-
-The system uses **Sliding Window Counter** algorithm for all rules:
-- More accurate than fixed windows
-- Prevents burst at window boundaries
-- Uses Redis sorted sets for timestamp tracking
-- Consistent algorithm across all rate limiting rules
-
-### Manual Testing
-
-#### Quick Rate Limiter Tests
 ```bash
-# Run all rate limiter tests
+# Run comprehensive test suite
+npm run test:client
+
+# Run individual tests
 node tests/run-all-tests.js
-
-# Or run individual tests
-node tests/test-burst.js
-node tests/test-api-limit.js
-node tests/test-global-limit.js
-node tests/test-warning-headers.js
 ```
-
-#### Individual Manual Tests
-```bash
-# Test auth rate limiting (should block after 5 requests)
-for i in {1..6}; do curl -X POST http://localhost:3000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"test"}'; echo; done
-
-# Test health endpoint bypass (should never block)
-for i in {1..200}; do curl http://localhost:3000/health; echo; done
-
-# Test admin reset functionality
-curl -X POST http://localhost:3000/admin/reset-rate-limit \
-  -H "Content-Type: application/json" \
-  -d '{"identifier":"::1"}'
-
-# Test different HTTP methods
-curl -X POST http://localhost:3000/api/data \
-  -H "Content-Type: application/json" \
-  -d '{"test":"data"}'
-
-curl -X PUT http://localhost:3000/api/data/123 \
-  -H "Content-Type: application/json" \
-  -d '{"test":"updated"}'
-
-curl -X DELETE http://localhost:3000/api/data/123
-```
-
-### Test Client
-
-Use the built-in test client for comprehensive testing:
-
-```bash
-# Build the project first
-npm run build
-
-# Run test suite against default server (localhost:3000)
-npm run test:client
-
-# Or run directly with ts-node
-ts-node src/client/test-client.ts
-
-# Or run via npm
-npm run test:client
-```
-
-**Test Coverage:**
-- All endpoints and HTTP methods
-- Rate limit headers validation (legacy + standard)
-- Burst protection, auth limits, and recovery
-- Boundary conditions and security scenarios
-- Header injection vulnerability testing
-- Queue worker functionality validation
-- Skip logic for successful/failed requests
-- Concurrent request handling
-- Detailed JSON reports with metrics
 
 ## ⚠️ Assumptions & Limitations
 
-### Assumptions
+**Assumptions:**
+- Single Redis instance (not clustered)
+- IP-based client identification
+- Sliding window algorithm with Redis sorted sets
 
-1. **Single Redis Instance**: Assumes single Redis server (not clustered)
-2. **IP-Based Identification**: Uses client IP for rate limiting by default
-3. **Sliding Window Algorithm**: Uses sliding window counter with fixed window fallback
-4. **Synchronous Processing**: Rate limit checks are synchronous, increments are async
-5. **Memory Constraints**: Local cache has no size limits (relies on TTL cleanup)
-6. **Redis Sorted Sets**: Relies on ZSET operations for sliding window implementation
-
-### Limitations
-
-1. **Clock Synchronization**: Requires synchronized clocks across multiple servers
-2. **Redis Dependency**: System fails open if Redis is unavailable (mitigated by in-memory fallback)
-3. **Memory Usage**: Local cache grows with unique client identifiers
-4. **Precision**: 1-second minimum window resolution
-5. **Distributed Coordination**: No coordination between multiple server instances
-
-### Known Issues
-
-1. **Race Conditions**: Possible under extreme concurrent load
-2. **Memory Leaks**: Local cache cleanup relies on intervals
-3. **Redis Failover**: No automatic Redis failover handling
-4. **Lua Script Errors**: Falls back to fixed window algorithm
-5. **Sorted Set Growth**: Redis memory usage grows with request volume (cleaned by TTL)
-6. **TTL Precision**: Redis TTL calculations can be off by seconds due to rounding
-
-### Skip Logic for Request Handling
-
-The system includes configurable options to exclude successful or failed requests from rate limits:
-
-- `skipSuccessfulRequests`: When enabled, successful requests (2xx status codes) don't count against limits
-- `skipFailedRequests`: When enabled, failed requests (4xx/5xx status codes) don't count against limits
-
-This provides flexibility for different use cases, such as only counting failed authentication attempts.
-
-### Local Throttling
-
-The implementation includes a local throttling mechanism that helps smooth traffic distribution:
-
-- Uses a `throttleMap` to track request timing per client
-- Calculates minimum intervals between requests based on burst rule
-- Applies small delays to maintain consistent request spacing
-- Automatically cleans up stale entries to prevent memory growth
-
-### Monitoring & Alerting
-
-- Monitor Redis memory usage
-- Set up alerts for high error rates
-- Track queue processing delays
-- Monitor response times
-- Use the comprehensive queue statistics to identify bottlenecks
-
-### Scaling Considerations
-
-1. **Horizontal Scaling**: Multiple server instances share Redis state
-2. **Redis Clustering**: Consider Redis Cluster for high availability
-3. **Load Balancing**: Use sticky sessions or consistent hashing
-4. **Monitoring**: Implement comprehensive logging and metrics
-
-### Security
-
-1. **Redis Security**: Use Redis AUTH and network isolation
-2. **Rate Limit Bypass**: Implement IP whitelisting for trusted sources
-3. **DDoS Protection**: Consider upstream rate limiting (CDN/Load Balancer)
-4. **Input Validation**: Validate all admin endpoint inputs
-5. **Header Sanitization**: Client IP extraction sanitizes malicious headers
-6. **Key Security**: Rate limit keys use hashing to prevent collisions
+**Limitations:**
+- Requires synchronized clocks across servers
+- Redis dependency (mitigated with circuit breaker)
+- 1-second minimum window resolution
+- No coordination between multiple server instances

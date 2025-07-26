@@ -18,10 +18,15 @@ async function runAllTests() {
   console.log('Running all rate limiter tests...');
   
   const tests = [
+    'test-health-bypass.js',
     'test-burst.js',
     'test-api-limit.js', 
     'test-global-limit.js',
-    'test-warning-headers.js'
+    'test-warning-headers.js',
+    'test-skip-logic.js',
+    'test-redis-fallback.js',
+    'test-memory-cleanup.js',
+    'test-queue-failure.js'
   ];
   
   for (const test of tests) {

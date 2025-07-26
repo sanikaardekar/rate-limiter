@@ -34,6 +34,7 @@ export class RateLimitTestClient {
   async runTests(): Promise<void> {
     console.log('Starting comprehensive rate limiter tests\n');
 
+    await this.testHealthEndpointBypass();
     await this.testBasicEndpoints();
     await this.testAllHttpMethods();
     await this.testBurstProtection();
@@ -48,7 +49,10 @@ export class RateLimitTestClient {
     await this.testHeaderValidation();
     await this.testSecurityScenarios();
     await this.testWorkerFunctionality();
-    await this.testSkipLogic();
+    await this.testSkipLogicDetailed();
+    await this.testRedisFallbackScenarios();
+    await this.testMemoryCleanupBehavior();
+    await this.testQueueFailureRecovery();
     await this.testInMemoryFallback();
     await this.testLocalThrottling();
     await this.testQueueEdgeCases();
@@ -346,20 +350,165 @@ export class RateLimitTestClient {
     console.log('Worker functionality test completed\n');
   }
 
-  private async testSkipLogic(): Promise<void> {
-    console.log('Testing skip logic...');
+  private async testHealthEndpointBypass(): Promise<void> {
+    console.log('Testing health endpoint bypass...');
     
+    await this.resetRateLimits();
+    
+    // Test health endpoint should never be rate limited
+    for (let i = 0; i < 100; i++) {
+      await this.makeRequest('GET', '/health', undefined, 'health-bypass');
+    }
+    
+    // Exhaust other limits to verify health still works
+    const promises = [];
+    for (let i = 0; i < 60; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'health-bypass-verify'));
+    }
+    await Promise.all(promises);
+    
+    // Health should still work
+    for (let i = 0; i < 10; i++) {
+      await this.makeRequest('GET', '/health', undefined, 'health-bypass-after-limit');
+    }
+    
+    console.log('Health endpoint bypass test completed\n');
+  }
 
-    await this.makeRequest('GET', '/api/data', undefined, 'skip-success');
+  private async testSkipLogicDetailed(): Promise<void> {
+    console.log('Testing skip logic for successful/failed requests...');
     
+    await this.resetRateLimits();
+    
+    // Test successful requests
+    for (let i = 0; i < 5; i++) {
+      await this.makeRequest('GET', '/api/data', undefined, 'skip-success');
+    }
+    
+    // Test failed requests
+    for (let i = 0; i < 3; i++) {
+      await this.makeRequest('GET', '/nonexistent', undefined, 'skip-failure');
+    }
+    
+    // Test mixed requests
+    const mixedRequests = [
+      { url: '/api/data', expected: 200 },
+      { url: '/nonexistent', expected: 404 },
+      { url: '/api/data', expected: 200 },
+      { url: '/invalid', expected: 404 }
+    ];
+    
+    for (const { url } of mixedRequests) {
+      await this.makeRequest('GET', url, undefined, 'skip-mixed');
+    }
+    
+    console.log('Skip logic detailed test completed\n');
+  }
 
-    await this.makeRequest('GET', '/nonexistent', undefined, 'skip-error');
+  private async testRedisFallbackScenarios(): Promise<void> {
+    console.log('Testing Redis failure scenarios and algorithm fallback...');
     
+    await this.resetRateLimits();
+    
+    // Test normal operation
+    for (let i = 0; i < 3; i++) {
+      await this.makeRequest('GET', '/api/data', undefined, 'redis-normal');
+    }
+    
+    // Test high load to potentially trigger fallback
+    const promises = [];
+    for (let i = 0; i < 20; i++) {
+      promises.push(this.makeRequest('GET', '/api/data', undefined, 'redis-fallback'));
+    }
+    await Promise.all(promises);
+    
+    // Test algorithm consistency
+    await this.resetRateLimits();
+    for (let i = 0; i < 10; i++) {
+      await this.makeRequest('GET', '/api/data', undefined, 'redis-consistency');
+      await this.sleep(50);
+    }
+    
+    console.log('Redis fallback scenarios test completed\n');
+  }
 
-    await this.makeRequest('POST', '/api/data', { malformed: 'json}' }, 'skip-500-error');
-    await this.makeRequest('GET', '/invalid/endpoint', undefined, 'skip-404-error');
+  private async testMemoryCleanupBehavior(): Promise<void> {
+    console.log('Testing memory cleanup and local cache TTL...');
     
-    console.log('Skip logic test completed\n');
+    // Generate unique identifiers to test cache
+    const uniquePromises = [];
+    for (let i = 0; i < 50; i++) {
+      uniquePromises.push(
+        this.makeRawRequest('GET', '/api/data', undefined, 'memory-cleanup', {
+          'X-Forwarded-For': `192.168.1.${i}`
+        })
+      );
+    }
+    await Promise.all(uniquePromises);
+    
+    // Test throttle map usage
+    const throttlePromises = [];
+    for (let i = 0; i < 25; i++) {
+      throttlePromises.push(this.makeRequest('GET', '/api/data', undefined, 'memory-throttle'));
+    }
+    await Promise.all(throttlePromises);
+    
+    // Test TTL behavior
+    await this.resetRateLimits();
+    for (let i = 0; i < 5; i++) {
+      await this.makeRequest('GET', '/api/data', undefined, 'memory-ttl');
+      await this.sleep(200);
+    }
+    
+    // Test memory pressure
+    const memoryPromises = [];
+    for (let i = 0; i < 100; i++) {
+      memoryPromises.push(
+        this.makeRawRequest('GET', '/api/data', undefined, 'memory-pressure', {
+          'X-Forwarded-For': `10.0.0.${i % 255}`
+        })
+      );
+    }
+    await Promise.all(memoryPromises);
+    
+    console.log('Memory cleanup behavior test completed\n');
+  }
+
+  private async testQueueFailureRecovery(): Promise<void> {
+    console.log('Testing queue processing failures and recovery...');
+    
+    // Generate load to create queue jobs
+    const loadPromises = [];
+    for (let i = 0; i < 30; i++) {
+      loadPromises.push(this.makeRequest('GET', '/api/data', undefined, 'queue-load'));
+    }
+    await Promise.all(loadPromises);
+    
+    // Test cleanup job triggers
+    const cleanupPromises = [];
+    for (let i = 0; i < 60; i++) {
+      cleanupPromises.push(this.makeRequest('GET', '/api/data', undefined, 'queue-cleanup'));
+    }
+    await Promise.all(cleanupPromises);
+    
+    // Test different job types
+    await this.makeRequest('POST', '/admin/reset-rate-limit', {
+      identifier: this.getClientIdentifier(),
+      ruleId: 'api'
+    }, 'queue-reset');
+    
+    for (let i = 0; i < 10; i++) {
+      await this.makeRequest('GET', '/api/data', undefined, 'queue-increment');
+    }
+    
+    // Test queue resilience under stress
+    const stressPromises = [];
+    for (let i = 0; i < 100; i++) {
+      stressPromises.push(this.makeRequest('GET', '/api/data', undefined, 'queue-stress'));
+    }
+    await Promise.all(stressPromises);
+    
+    console.log('Queue failure recovery test completed\n');
   }
 
   private async testInMemoryFallback(): Promise<void> {
@@ -639,7 +788,7 @@ export class RateLimitTestClient {
     console.log('\nCoverage:');
     console.log(`Endpoints: ${testedEndpoints.length}`);
     console.log(`HTTP Methods: ${testedMethods.join(', ')}`);
-    console.log(`Test Types: Basic, Burst, Auth, API, Global, Concurrent, Boundary, Recovery, Admin, Error, Security, Worker, Skip Logic`);
+    console.log(`Test Types: Health Bypass, Basic, Burst, Auth, API, Global, Concurrent, Boundary, Recovery, Admin, Error, Security, Worker, Skip Logic Detailed, Redis Fallback, Memory Cleanup, Queue Failure Recovery, In-Memory Fallback, Local Throttling, Queue Edge Cases, Algorithm Edge Cases`);
     
     this.saveResults();
     console.log('\nComprehensive rate limiter testing completed');

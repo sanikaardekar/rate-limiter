@@ -56,29 +56,29 @@ export class RateLimiterMiddleware {
         }
 
 
-        const results = await Promise.all(
-          this.options.rules.map(rule => this.checkRule(req, rule, true))
-        );
-
-        const activeResults = results.filter(result => result !== null);
-
+        // Short-circuit evaluation: stop at first blocking rule
+        let finalResult = null;
+        const activeResults = [];
+        
+        for (const rule of this.options.rules) {
+          const result = await this.checkRule(req, rule, true);
+          if (result === null) continue;
+          
+          activeResults.push(result);
+          
+          if (!result.allowed) {
+            await this.queueCleanupJob(identifier, result.rule);
+            return this.options.onLimitReached(req, res, result);
+          }
+          
+          if (!finalResult || result.rule.maxRequests < finalResult.rule.maxRequests) {
+            finalResult = result;
+          }
+        }
         
         if (activeResults.length === 0) {
           return next();
         }
-
-
-        const blockedResult = activeResults.find(result => !result.allowed);
-        if (blockedResult) {
-          await this.queueCleanupJob(identifier, blockedResult.rule);
-          return this.options.onLimitReached(req, res, blockedResult);
-        }
-        
-
-        const finalResult = activeResults.reduce((most, current) => {
-  
-          return current.rule.maxRequests < most.rule.maxRequests ? current : most;
-        });
 
         if (!finalResult) {
           return next();
@@ -252,7 +252,7 @@ export class RateLimiterMiddleware {
   }
 
   private cleanupThrottleMap(): void {
-    if (this.throttleMap.size > 1000) {
+    if (this.throttleMap.size > 100) {
       const now = Date.now();
       const cutoff = now - 60000;
       for (const [key, timestamp] of this.throttleMap.entries()) {

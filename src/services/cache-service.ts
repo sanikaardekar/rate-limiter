@@ -1,33 +1,38 @@
 import { RedisService } from './redis-service';
 import { RateLimitRule, CacheEntry, RateLimitResult, RateLimitInfo } from '../types';
+import { CircuitBreaker } from '../utils/circuit-breaker';
 
 export class CacheService {
   private redisService: RedisService;
   private localCache: Map<string, CacheEntry> = new Map();
-  private localCacheTTL: number = 60000;
-  private enableInMemoryFallback: boolean = false; 
+  private localCacheTTL: number = parseInt(process.env.LOCAL_CACHE_TTL || '60000');
+  private enableInMemoryFallback: boolean = false;
+  private circuitBreaker: CircuitBreaker; 
 
   constructor(enableInMemoryFallback: boolean = false) {
     this.redisService = RedisService.getInstance();
     this.enableInMemoryFallback = enableInMemoryFallback;
+    this.circuitBreaker = new CircuitBreaker();
     this.startLocalCacheCleanup();
   }
 
   async checkRateLimit(key: string, rule: RateLimitRule): Promise<RateLimitResult> {
-    try {
-      const data = await this.redisService.slidingWindowCheck(key, rule, true);
-
-      return this.buildResult(data, rule, data.allowed);
-    } catch (error) {
-      console.error(`[ERROR] Redis failed for key=${key}, rule=${rule.id}:`, error instanceof Error ? error.message : error);
-      const { HeadersUtil } = require('../utils/headers');
-      HeadersUtil.logError('redis', error as Error, { operation: 'checkRateLimit', key, rule: rule.id });
-      
-      if (this.enableInMemoryFallback) {
-        return this.checkRateLimitInMemory(key, rule);
+    return this.circuitBreaker.execute(
+      async () => {
+        const data = await this.redisService.slidingWindowCheck(key, rule, true);
+        return this.buildResult(data, rule, data.allowed);
+      },
+      async () => {
+        console.error(`[ERROR] Redis failed for key=${key}, rule=${rule.id} - using fallback`);
+        const { HeadersUtil } = require('../utils/headers');
+        HeadersUtil.logError('redis', new Error('Circuit breaker open'), { operation: 'checkRateLimit', key, rule: rule.id });
+        
+        if (this.enableInMemoryFallback) {
+          return this.checkRateLimitInMemory(key, rule);
+        }
+        return this.buildDefaultResult(rule, true);
       }
-      return this.buildDefaultResult(rule, true);
-    }
+    );
   }
 
   async getCurrentCount(key: string, rule: RateLimitRule): Promise<RateLimitResult> {
