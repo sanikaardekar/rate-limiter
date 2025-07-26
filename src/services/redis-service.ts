@@ -66,7 +66,7 @@ export class RedisService {
   }
 
   async incrementCounter(key: string, rule: RateLimitRule): Promise<CacheEntry> {
-    const algorithm = rule.algorithm || 'sliding'; 
+    const algorithm = rule.algorithm || 'sliding';
     
     if (algorithm === 'fixed') {
       return await this.incrementCounterFixedWindow(key, rule);
@@ -88,11 +88,9 @@ export class RedisService {
         local now = tonumber(ARGV[3])
         local windowMs = tonumber(ARGV[4])
 
-        -- ATOMIC: Remove expired entries and count
         redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
         local currentCount = redis.call('ZCARD', key)
 
-        -- Set TTL to prevent memory leaks
         if currentCount > 0 then
           redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
         end
@@ -151,11 +149,9 @@ export class RedisService {
         local requestId = ARGV[5]
         local windowMs = tonumber(ARGV[6])
 
-        -- ATOMIC: Remove expired, count, check, add with verification
         redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
         local currentCount = redis.call('ZCARD', key)
         
-        -- Block if at or over limit
         if currentCount >= maxRequests then
           redis.call('EXPIRE', key, math.ceil(windowMs / 1000))
           return cjson.encode({
@@ -166,11 +162,9 @@ export class RedisService {
           })
         end
         
-        -- Add and verify success
         local addResult = redis.call('ZADD', key, now, requestId)
         local finalCount = redis.call('ZCARD', key)
         
-        -- Double-check we didn't exceed limit due to race/failure
         if finalCount > maxRequests then
           redis.call('ZREM', key, requestId)
           finalCount = redis.call('ZCARD', key)
@@ -328,11 +322,9 @@ export class RedisService {
         local requestId = ARGV[6]
         local windowMs = tonumber(ARGV[7])
 
-        -- ATOMIC: Clean expired, count, check limit, optionally add
         redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
         local currentCount = redis.call('ZCARD', key)
         
-        -- Check limit before any increment
         local allowed = currentCount < maxRequests
         local finalCount = currentCount
         
@@ -374,9 +366,9 @@ export class RedisService {
       if (increment) {
         const result = await this.incrementCounterFixedWindow(key, rule);
         return { 
-        ...result, 
-        allowed: typeof result.allowed === 'boolean' ? result.allowed : (result.count || 0) <= rule.maxRequests 
-      };
+          ...result, 
+          allowed: typeof result.allowed === 'boolean' ? result.allowed : (result.count || 0) <= rule.maxRequests 
+        };
       } else {
         const result = await this.getCurrentCountFixedWindow(key, rule);
         return { ...result, allowed: result.count < rule.maxRequests };
@@ -402,13 +394,11 @@ export class RedisService {
         local windowStart = tonumber(ARGV[1])
         local windowMs = tonumber(ARGV[2])
         
-        -- Remove most recent entry to revert increment
         local entries = redis.call('ZREVRANGE', key, 0, 0, 'WITHSCORES')
         if #entries > 0 then
           redis.call('ZREM', key, entries[1])
         end
         
-        -- Clean expired and set TTL
         redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
         local count = redis.call('ZCARD', key)
         if count > 0 then

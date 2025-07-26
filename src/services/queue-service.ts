@@ -23,44 +23,40 @@ export class QueueService {
     this.setupPeriodicCleanup();
   }
 
-  private setupQueueProcessors(): void {
-
-  }
-
   async startProcessing(): Promise<void> {
     try {
       this.rateLimitQueue.process('process-rate-limit', 10, async (job) => {
-      const { type, key, rule, timestamp } = job.data;
-      
-      try {
-        switch (type) {
-          case 'INCREMENT':
-            await this.redisService.incrementCounter(key, rule);
-            break;
-          case 'RESET':
-            const redis = await this.redisService.getClient();
-            await redis.del(key);
-            break;
-          case 'CLEANUP':
-            await this.redisService.cleanupExpiredKeys(`${key}*`);
-            break;
+        const { type, key, rule, timestamp } = job.data;
+        
+        try {
+          switch (type) {
+            case 'INCREMENT':
+              await this.redisService.incrementCounter(key, rule);
+              break;
+            case 'RESET':
+              const redis = await this.redisService.getClient();
+              await redis.del(key);
+              break;
+            case 'CLEANUP':
+              await this.redisService.cleanupExpiredKeys(`${key}*`);
+              break;
+          }
+        } catch (error) {
+          console.error(`Error processing ${type} job:`, error);
+          throw error;
         }
-      } catch (error) {
-        console.error(`Error processing ${type} job:`, error);
-        throw error;
-      }
-    });
+      });
 
       this.cleanupQueue.process('cleanup-expired', 1, async (job) => {
-      const { pattern } = job.data;
-      
-      try {
-        await this.redisService.cleanupExpiredKeys(pattern);
-      } catch (error) {
-        console.error('Error in cleanup job:', error);
-        throw error;
-      }
-    });
+        const { pattern } = job.data;
+        
+        try {
+          await this.redisService.cleanupExpiredKeys(pattern);
+        } catch (error) {
+          console.error('Error in cleanup job:', error);
+          throw error;
+        }
+      });
 
       this.rateLimitQueue.on('failed', (job, err) => {
         console.error(`Rate limit job ${job.id} failed:`, err);
@@ -76,7 +72,7 @@ export class QueueService {
       'cleanup-expired',
       { pattern: 'rate_limit:*' },
       {
-        repeat: { cron: '*/10 * * * *' }, 
+        repeat: { cron: '*/10 * * * *' },
         removeOnComplete: 5,
         removeOnFail: 3,
       }

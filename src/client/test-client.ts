@@ -166,21 +166,17 @@ export class RateLimitTestClient {
     
     await this.resetRateLimits();
     
-
     for (let i = 0; i < 100; i++) {
       await this.makeRequest('GET', '/api/data', undefined, 'boundary-burst');
     }
     
-
     await this.makeRequest('GET', '/api/data', undefined, 'boundary-burst-exceed');
     
-
     await this.resetRateLimits();
     for (let i = 0; i < 5; i++) {
       await this.makeRequest('POST', '/auth/login', { email: 'test@example.com' }, 'boundary-auth');
     }
     
-
     await this.makeRequest('POST', '/auth/login', { email: 'test@example.com' }, 'boundary-auth-exceed');
     
     console.log('Boundary conditions test completed\n');
@@ -189,7 +185,6 @@ export class RateLimitTestClient {
   private async testRecoveryBehavior(): Promise<void> {
     console.log('Testing recovery behavior...');
     
-
     const promises = [];
     for (let i = 0; i < 110; i++) {
       promises.push(this.makeRequest('GET', '/api/data', undefined, 'recovery-exhaust'));
@@ -199,7 +194,6 @@ export class RateLimitTestClient {
     console.log('Waiting for rate limit window to reset...');
     await this.sleep(2000);
     
-
     await this.makeRequest('GET', '/api/data', undefined, 'recovery-test');
     
     console.log('Recovery behavior test completed\n');
@@ -231,25 +225,21 @@ export class RateLimitTestClient {
   private async testHeaderValidation(): Promise<void> {
     console.log('Testing header validation...');
     
-
     await this.resetRateLimits();
     await this.sleep(100);
     
-
     const successResult = await this.makeRequestForHeaders('GET', '/api/data');
     const successLegacy = !!(successResult.rateLimitHeaders['x-ratelimit-limit']);
     const successStandard = !!(successResult.rateLimitHeaders['ratelimit-limit']);
     
     console.log(`Success request - Legacy: ${successLegacy ? 'Present' : 'Missing'}, Standard: ${successStandard ? 'Present' : 'Missing'}`);
     
-
     const loadPromises = [];
     for (let i = 0; i < 150; i++) {
       loadPromises.push(this.makeRequest('GET', '/api/data', undefined, 'header-load'));
     }
     await Promise.all(loadPromises);
     
-
     const blockedResult = await this.makeRequestForHeaders('GET', '/api/data');
     const blockedLegacy = !!(blockedResult.rateLimitHeaders['x-ratelimit-limit']);
     const blockedStandard = !!(blockedResult.rateLimitHeaders['ratelimit-limit']);
@@ -263,14 +253,11 @@ export class RateLimitTestClient {
   private async testSecurityScenarios(): Promise<void> {
     console.log('Testing security scenarios...');
     
-
     await this.makeRawRequest('POST', '/api/data', '{"invalid": json}', 'security');
     
-
     const largePayload = 'x'.repeat(10000);
     await this.makeRequest('POST', '/api/data', { data: largePayload }, 'security');
     
-
     await this.makeRequest('POST', '/auth/login', {
       email: "'; DROP TABLE users; --",
       password: 'test'
@@ -280,7 +267,6 @@ export class RateLimitTestClient {
       content: '<script>alert("xss")</script>'
     }, 'security');
     
-
     console.log('   Testing Redis edge cases...');
     const extremePromises = [];
     for (let i = 0; i < 500; i++) {
@@ -288,7 +274,6 @@ export class RateLimitTestClient {
     }
     await Promise.all(extremePromises);
     
-
     const injectionPayloads = [
       '127.0.0.1\r\nX-Injected: malicious',
       '10.0.0.1\nSet-Cookie: evil=true',
@@ -301,7 +286,6 @@ export class RateLimitTestClient {
       });
     }
     
-
     await this.testSkipLogicEdgeCases();
     
     console.log('Security scenarios test completed\n');
@@ -355,19 +339,16 @@ export class RateLimitTestClient {
     
     await this.resetRateLimits();
     
-    // Test health endpoint should never be rate limited
     for (let i = 0; i < 100; i++) {
       await this.makeRequest('GET', '/health', undefined, 'health-bypass');
     }
     
-    // Exhaust other limits to verify health still works
     const promises = [];
     for (let i = 0; i < 60; i++) {
       promises.push(this.makeRequest('GET', '/api/data', undefined, 'health-bypass-verify'));
     }
     await Promise.all(promises);
     
-    // Health should still work
     for (let i = 0; i < 10; i++) {
       await this.makeRequest('GET', '/health', undefined, 'health-bypass-after-limit');
     }
@@ -514,7 +495,6 @@ export class RateLimitTestClient {
   private async testInMemoryFallback(): Promise<void> {
     console.log('Testing in-memory fallback scenarios...');
     
-
     const ipFormats = ['192.168.1.1', '::1', '2001:db8::1', 'invalid-ip'];
     for (const ip of ipFormats) {
       await this.makeRawRequest('GET', '/api/data', undefined, 'fallback-test', {
@@ -528,7 +508,6 @@ export class RateLimitTestClient {
   private async testLocalThrottling(): Promise<void> {
     console.log('Testing local throttling behavior...');
     
-
     const promises = [];
     for (let i = 0; i < 20; i++) {
       promises.push(this.makeRequest('GET', '/api/data', undefined, 'throttle-test'));
@@ -541,10 +520,8 @@ export class RateLimitTestClient {
   private async testQueueEdgeCases(): Promise<void> {
     console.log('Testing queue edge cases...');
     
-
     await this.makeRequest('GET', '/admin/queue-stats', undefined, 'queue-before');
     
-
     const promises = [];
     for (let i = 0; i < 50; i++) {
       promises.push(this.makeRequest('GET', '/api/data', undefined, 'queue-load'));
@@ -560,14 +537,12 @@ export class RateLimitTestClient {
   private async testAlgorithmEdgeCases(): Promise<void> {
     console.log('Testing algorithm edge cases...');
     
-
     const promises = [];
     for (let i = 0; i < 10; i++) {
       promises.push(this.makeRequest('GET', '/api/data', undefined, 'algorithm-precision'));
     }
     await Promise.all(promises);
     
-
     await this.makeRequest('GET', '/api/data', undefined, 'boundary-timing');
     await this.makeRequest('GET', '/test/limited', undefined, 'boundary-timing');
     
@@ -793,7 +768,6 @@ export class RateLimitTestClient {
     this.saveResults();
     console.log('\nComprehensive rate limiter testing completed');
     
-
     const sampleWithHeaders = this.results.find(r => r.rateLimitHeaders['x-ratelimit-limit']);
     if (sampleWithHeaders) {
       console.log('\nSample headers:', JSON.stringify(sampleWithHeaders.rateLimitHeaders, null, 2));
@@ -832,7 +806,6 @@ export class RateLimitTestClient {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
-
 
 if (require.main === module) {
   const baseUrl = process.argv[2] || 'http://localhost:3000';

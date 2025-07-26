@@ -20,7 +20,7 @@ async function runAllTests() {
   const tests = [
     'test-health-bypass.js',
     'test-burst.js',
-    'test-api-limit.js', 
+    'test-api-limit.js',
     'test-global-limit.js',
     'test-warning-headers.js',
     'test-skip-logic.js',
@@ -31,7 +31,6 @@ async function runAllTests() {
   
   for (const test of tests) {
     await runTest(test);
-
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
   

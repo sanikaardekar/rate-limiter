@@ -11,7 +11,7 @@ export interface RateLimiterOptions {
   skipFailedRequests?: boolean;
   keyGenerator?: (req: Request) => string;
   onLimitReached?: (req: Request, res: Response, result: any) => void;
-  standardHeaders?: boolean; 
+  standardHeaders?: boolean;
   legacyHeaders?: boolean;
   enableLocalThrottle?: boolean;
   maxThrottleDelay?: number;
@@ -47,7 +47,6 @@ export class RateLimiterMiddleware {
       try {
         const identifier = this.options.keyGenerator(req);
         
-
         if (this.options.enableLocalThrottle) {
           const throttleDelay = await this.calculateThrottleDelay(identifier);
           if (throttleDelay > 0) {
@@ -55,8 +54,6 @@ export class RateLimiterMiddleware {
           }
         }
 
-
-        // Short-circuit evaluation: stop at first blocking rule
         let finalResult = null;
         const activeResults = [];
         
@@ -98,7 +95,6 @@ export class RateLimiterMiddleware {
         const metadata = HeadersUtil.getRequestMetadata(req);
         HeadersUtil.logRateLimitEvent(identifier, finalResult.rule, finalResult, metadata);
 
-
         this.setupPostResponseHandling(req, res, activeResults);
 
         next();
@@ -112,7 +108,7 @@ export class RateLimiterMiddleware {
 
   private async checkRule(req: Request, rule: RateLimitRule, increment: boolean = true) {
     if (rule.skipIf && rule.skipIf(req)) {
-      return null; 
+      return null;
     }
 
     const identifier = rule.keyGenerator ? rule.keyGenerator(req) : this.options.keyGenerator(req);
@@ -159,7 +155,6 @@ export class RateLimiterMiddleware {
   }
 
   private defaultOnLimitReached = (req: Request, res: Response, result: any) => {
-
     if (this.options.legacyHeaders) {
       HeadersUtil.setRateLimitHeaders(res, result);
     }
@@ -231,7 +226,6 @@ export class RateLimiterMiddleware {
       }
     }
     
-
     this.throttleMap.delete(identifier);
   }
 

@@ -1,10 +1,10 @@
 export interface RateLimitRule {
   id: string;
   windowMs: number;
-  maxRequests: number; 
-  keyGenerator?: (req: any) => string; 
-  skipIf?: (req: any) => boolean; 
-  message?: string; 
+  maxRequests: number;
+  keyGenerator?: (req: any) => string;
+  skipIf?: (req: any) => boolean;
+  message?: string;
   statusCode?: number;
   algorithm?: 'fixed' | 'sliding';
 }

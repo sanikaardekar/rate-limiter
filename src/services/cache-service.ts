@@ -7,7 +7,7 @@ export class CacheService {
   private localCache: Map<string, CacheEntry> = new Map();
   private localCacheTTL: number = parseInt(process.env.LOCAL_CACHE_TTL || '60000');
   private enableInMemoryFallback: boolean = false;
-  private circuitBreaker: CircuitBreaker; 
+  private circuitBreaker: CircuitBreaker;
 
   constructor(enableInMemoryFallback: boolean = false) {
     this.redisService = RedisService.getInstance();
@@ -72,8 +72,6 @@ export class CacheService {
 
     return { allowed, info, rule };
   }
-
-
 
   private startLocalCacheCleanup(): void {
     setInterval(() => {

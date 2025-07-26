@@ -36,30 +36,28 @@ export class ApiServer {
     }));
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true }));
-    
-
   }
 
   private setupRateLimiting(): void {
     const rules: RateLimitRule[] = [
       {
         id: 'global',
-        windowMs: 15 * 60 * 1000, 
-        maxRequests: 1000, 
+        windowMs: 15 * 60 * 1000,
+        maxRequests: 1000,
         message: 'Too many requests from this IP, please try again later',
         algorithm: 'sliding',
       },
       {
         id: 'api',
-        windowMs: 60 * 1000, 
-        maxRequests: 300, 
+        windowMs: 60 * 1000,
+        maxRequests: 300,
         keyGenerator: (req) => `${req.ip}--${req.path}`,
         skipIf: (req) => req.path === '/health' || req.path.startsWith('/health'),
-        algorithm: 'sliding', 
+        algorithm: 'sliding',
       },
       {
         id: 'auth',
-        windowMs: 5 * 60 * 1000, 
+        windowMs: 5 * 60 * 1000,
         maxRequests: 5,
         message: 'Too many authentication attempts, please try again later',
         statusCode: 423,
@@ -68,8 +66,8 @@ export class ApiServer {
       },
       {
         id: 'burst',
-        windowMs: 1000, 
-        maxRequests: 50, 
+        windowMs: 1000,
+        maxRequests: 50,
         message: 'Request rate too high, please slow down',
         skipIf: (req) => req.path === '/health' || req.path.startsWith('/health'),
         algorithm: 'sliding',
@@ -89,7 +87,6 @@ export class ApiServer {
   }
 
   private setupRoutes(): void {
-    // Root route
     this.app.get('/', (req: Request, res: Response) => {
       res.json({
         message: 'Rate Limiter API',
@@ -114,7 +111,6 @@ export class ApiServer {
       });
     });
 
-  
     this.app.get('/api/data', this.createApiRoute());
     this.app.post('/api/data', this.createApiRoute());
     this.app.put('/api/data/:id', this.createApiRoute());
@@ -128,14 +124,12 @@ export class ApiServer {
     this.app.post('/admin/reset-rate-limit', this.resetRateLimitRoute());
     this.app.get('/admin/queue-stats', this.getQueueStatsRoute());
 
-
     this.app.get('/test/limited', (req: Request, res: Response) => {
       res.json({
         message: 'This endpoint is rate limited',
         timestamp: new Date().toISOString(),
       });
     });
-
 
     this.app.use((req: Request, res: Response) => {
       res.status(404).json({

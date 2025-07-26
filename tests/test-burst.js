@@ -3,7 +3,6 @@ const axios = require('axios');
 async function testBurstProtection() {
   console.log('Testing burst protection with 110 concurrent requests...');
   
-
   await axios.post('http://localhost:3000/admin/reset-rate-limit', {
     identifier: '::1'
   }, { validateStatus: () => true });
@@ -43,21 +42,18 @@ async function testBurstProtection() {
     console.log(`Sample result - Status: ${results[0].status}, Limit: ${results[0].limit}, Remaining: ${results[0].remaining}`);
   }
   
-
   await testAlgorithmEdgeCases();
 }
 
 async function testAlgorithmEdgeCases() {
   console.log('\nTesting algorithm edge cases...');
   
-
   await axios.post('http://localhost:3000/admin/reset-rate-limit', {
     identifier: '::1'
   }, { validateStatus: () => true });
   
   await new Promise(resolve => setTimeout(resolve, 100));
   
-
   const rapidPromises = [];
   for (let i = 0; i < 15; i++) {
     rapidPromises.push(
