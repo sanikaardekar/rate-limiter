@@ -17,7 +17,7 @@ export class RateLimitWorker {
     this.isRunning = true;
     console.log('Rate limit worker started');
     
-    // Start processing jobs
+
     await this.queueService.startProcessing();
   }
 
@@ -34,7 +34,7 @@ export class RateLimitWorker {
   }
 }
 
-// Auto-start worker if run directly
+
 if (require.main === module) {
   const worker = new RateLimitWorker();
   

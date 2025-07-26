@@ -47,7 +47,7 @@ export class RateLimiterMiddleware {
       try {
         const identifier = this.options.keyGenerator(req);
         
-        // Apply local throttle if enabled
+
         if (this.options.enableLocalThrottle) {
           const throttleDelay = await this.calculateThrottleDelay(identifier);
           if (throttleDelay > 0) {
@@ -55,7 +55,7 @@ export class RateLimiterMiddleware {
           }
         }
 
-        // Check all rules atomically - any failure blocks request
+
         const results = await Promise.all(
           this.options.rules.map(rule => this.checkRule(req, rule, true))
         );
@@ -67,17 +67,17 @@ export class RateLimiterMiddleware {
           return next();
         }
 
-        // ANY blocked result blocks the entire request
+
         const blockedResult = activeResults.find(result => !result.allowed);
         if (blockedResult) {
           await this.queueCleanupJob(identifier, blockedResult.rule);
           return this.options.onLimitReached(req, res, blockedResult);
         }
         
-        // Find most restrictive allowed rule for headers
+
         const finalResult = activeResults.reduce((most, current) => {
-          // Most restrictive = lowest remaining requests
-          return current.info.remainingRequests < most.info.remainingRequests ? current : most;
+  
+          return current.rule.maxRequests < most.rule.maxRequests ? current : most;
         });
 
         if (!finalResult) {
@@ -98,7 +98,7 @@ export class RateLimiterMiddleware {
         const metadata = HeadersUtil.getRequestMetadata(req);
         HeadersUtil.logRateLimitEvent(identifier, finalResult.rule, finalResult, metadata);
 
-        // Setup post-response handling for skip logic
+
         this.setupPostResponseHandling(req, res, activeResults);
 
         next();
@@ -147,16 +147,27 @@ export class RateLimiterMiddleware {
   }
 
   private addWarningHeaders(res: Response, result: any): void {
-    const remainingPercent = (result.info.remainingRequests / result.rule.maxRequests) * 100;
+    const remaining = result.info.remainingRequests;
+    const total = result.rule.maxRequests;
+    const remainingPercent = (remaining / total) * 100;
     
-    if (remainingPercent <= 10 && remainingPercent > 0) {
+    if (remaining === 0) {
       res.setHeader('X-RateLimit-Warning', 'Rate limit nearly exceeded');
-    } else if (remainingPercent <= 20 && remainingPercent > 0) {
+    } else if (remainingPercent <= 20) {
       res.setHeader('X-RateLimit-Warning', 'Approaching rate limit');
     }
   }
 
   private defaultOnLimitReached = (req: Request, res: Response, result: any) => {
+
+    if (this.options.legacyHeaders) {
+      HeadersUtil.setRateLimitHeaders(res, result);
+    }
+    if (this.options.standardHeaders) {
+      this.setStandardHeaders(res, result);
+    }
+    this.addWarningHeaders(res, result);
+    
     const message = result.rule.message || 'Too many requests, please try again later';
     const statusCode = result.rule.statusCode || 429;
 
@@ -220,7 +231,7 @@ export class RateLimiterMiddleware {
       }
     }
     
-    // Clear local throttle data
+
     this.throttleMap.delete(identifier);
   }
 

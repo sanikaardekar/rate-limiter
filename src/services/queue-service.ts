@@ -24,7 +24,7 @@ export class QueueService {
   }
 
   private setupQueueProcessors(): void {
-    // Processors will be set up when startProcessing is called
+
   }
 
   async startProcessing(): Promise<void> {

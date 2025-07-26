@@ -1,0 +1,11 @@
+
+> rate-limiter@1.0.0 start
+> node dist/server/api-server.js
+
+Rate limit worker started
+API Server running on port 3000
+Health check: http://localhost:3000/health
+API endpoints: http://localhost:3000/api/*
+Admin stats: http://localhost:3000/admin/stats
+Auth endpoints: http://localhost:3000/auth/*
+Test endpoints: http://localhost:3000/test/*

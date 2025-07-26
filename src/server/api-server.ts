@@ -69,7 +69,7 @@ export class ApiServer {
       {
         id: 'burst',
         windowMs: 1000, 
-        maxRequests: 100, 
+        maxRequests: 50, 
         message: 'Request rate too high, please slow down',
         skipIf: (req) => req.path.startsWith('/health'),
         algorithm: 'sliding',
@@ -83,18 +83,6 @@ export class ApiServer {
       enableLocalThrottle: true,
       maxThrottleDelay: 500,
       enableInMemoryFallback: true,
-      onLimitReached: (req, res, result) => {
-        res.status(result.rule.statusCode || 429).json({
-          error: 'Rate limit exceeded',
-          message: result.rule.message || 'Too many requests',
-          ruleId: result.rule.id,
-          limit: result.rule.maxRequests,
-          remaining: result.info.remainingRequests,
-          resetTime: result.info.resetTime,
-          retryAfter: result.info.retryAfter,
-          timestamp: new Date().toISOString(),
-        });
-      },
     });
 
     this.app.use(this.rateLimiter.middleware());

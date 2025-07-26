@@ -18,6 +18,38 @@ async function testApiRateLimit() {
   
   console.log(`Results: ${success} successful, ${blocked} blocked`);
   console.log(`API rate limiting: ${blocked > 0 ? 'WORKING' : 'NOT WORKING'}`);
+  
+
+  await testQueueEdgeCases();
+}
+
+async function testQueueEdgeCases() {
+  console.log('\nTesting queue system edge cases...');
+  
+  try {
+
+    const beforeStats = await axios.get('http://localhost:3000/admin/queue-stats');
+    console.log('Queue stats before:', JSON.stringify(beforeStats.data.queues));
+    
+
+    const loadPromises = [];
+    for (let i = 0; i < 20; i++) {
+      loadPromises.push(
+        axios.get('http://localhost:3000/api/data', { validateStatus: () => true })
+      );
+    }
+    await Promise.all(loadPromises);
+    
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+
+    const afterStats = await axios.get('http://localhost:3000/admin/queue-stats');
+    console.log('Queue stats after:', JSON.stringify(afterStats.data.queues));
+    
+  } catch (error) {
+    console.log('Queue test error:', error.message);
+  }
 }
 
 testApiRateLimit().catch(console.error);

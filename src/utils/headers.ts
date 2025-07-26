@@ -55,7 +55,7 @@ export class HeadersUtil {
     } else {
       ip = req.connection?.remoteAddress || req.socket?.remoteAddress || req.ip || 'unknown';
       ip = this.sanitizeIpAddress(ip);
-      // Don't include port for localhost connections to avoid each request being treated as different client
+
       if (ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') {
         return ip;
       }

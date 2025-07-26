@@ -26,7 +26,7 @@ async function runAllTests() {
   
   for (const test of tests) {
     await runTest(test);
-    // Wait between tests to avoid interference
+
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
   
