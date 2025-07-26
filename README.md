@@ -109,7 +109,7 @@ curl http://localhost:3000/admin/stats
 │  │                                                     │    │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │    │
 │  │  │ Global  │  │   API   │  │  Auth   │  │ Burst   │ │    │
-│  │  │15min/1k │  │1min/300 │  │5min/5   │  │1sec/100 │ │    │
+│  │  │15min/1k │  │1min/300 │  │5min/5   │  │1sec/50  │ │    │
 │  │  │Sliding  │  │Sliding  │  │Sliding  │  │Sliding  │ │    │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │    │
 │  │       │           │           │           │         │    │
@@ -269,7 +269,7 @@ Sliding Window (Primary):
 │        1-second sliding window          │
 │  ┌─────────────────────────────────┐    │
 │  │     Current window (any time)   │    │
-│  │        Max 100 requests        │    │
+│  │        Max 50 requests         │    │
 │  └─────────────────────────────────┘    │
 └─────────────────────────────────────────┘
 Benefit: Smooth rate limiting, no boundary bursts
@@ -307,7 +307,7 @@ The system implements four distinct rate limiting rules:
 - **Status Code**: 423 (Locked)
 
 ### 4. Burst Protection
-- **Limit**: 100 requests per second
+- **Limit**: 50 requests per second
 - **Scope**: All endpoints except `/health`
 - **Purpose**: Allow legitimate bursts while preventing DDoS
 
@@ -377,7 +377,7 @@ The `RateLimit-Policy` header follows the RFC standard format and provides infor
 **Graduated Response System:**
 - **Normal**: No warning headers
 - **20% remaining**: `X-RateLimit-Warning: Approaching rate limit`
-- **10% remaining**: `X-RateLimit-Warning: Rate limit nearly exceeded`
+
 - **0% remaining**: HTTP 429/423 with block
 
 ### Statistics Endpoint
@@ -478,10 +478,10 @@ Use the built-in test client for comprehensive testing:
 npm run build
 
 # Run test suite against default server (localhost:3000)
-node dist/client/test-client.js
+npm run test:client
 
-# Test against different server
-node dist/client/test-client.js http://localhost:3001
+# Or run directly with ts-node
+ts-node src/client/test-client.ts
 
 # Or run via npm
 npm run test:client
